@@ -1,0 +1,81 @@
+using System;
+using System.IO;
+
+namespace ServiceTool
+{
+    internal static class BundleFolders
+    {
+        internal static string ExecutableDirectory
+        {
+            get
+            {
+                string original = Environment.GetEnvironmentVariable("BARS_MANAGER_LAUNCH_DIRECTORY");
+                return !String.IsNullOrWhiteSpace(original) && Path.IsPathRooted(original) && Directory.Exists(original)
+                    ? original : AppDomain.CurrentDomain.BaseDirectory;
+            }
+        }
+
+        internal const string DefaultRoot = @"C:\Менеджер автоматизации Барс";
+
+        internal static string PickerStart(string preferred=null)
+        {
+            if(!String.IsNullOrWhiteSpace(preferred)&&Path.IsPathRooted(preferred))
+            {
+                for(string folder=Path.GetFullPath(preferred);!String.IsNullOrEmpty(folder);folder=Path.GetDirectoryName(folder))
+                    if(Directory.Exists(folder))return folder;
+            }
+            string saved=BundlePreferences.Load();
+            return Directory.Exists(saved)?saved:Directory.Exists(DefaultRoot)?DefaultRoot:ExecutableDirectory;
+        }
+        internal static string Find(string executableDirectory, string section)
+        {
+            foreach (string root in new[] { executableDirectory, DefaultRoot })
+            {
+                string path = Path.Combine(root, section);
+                if (Directory.Exists(path)) return path;
+
+            }
+            return null;
+        }
+
+        internal static string BundleRoot(string libraries)
+        {
+            return Path.GetFileName(libraries).Equals("_libraries", StringComparison.OrdinalIgnoreCase)
+                ? Path.GetDirectoryName(libraries) : libraries;
+        }
+
+        internal static string DownloadPath(string path)
+        {
+            if (String.IsNullOrEmpty(path) || !path.StartsWith("/", StringComparison.Ordinal))
+                throw new InvalidDataException("Неверный путь файла комплекта.");
+            if (path.StartsWith("/_", StringComparison.OrdinalIgnoreCase) || path.StartsWith("/SQL/", StringComparison.OrdinalIgnoreCase)) return path;
+            return "/_libraries" + path;
+        }
+
+        internal static string PackageDestination(string root, string remotePath)
+        {
+            return YandexBundleSource.LocalPath(root, DownloadPath(remotePath));
+        }
+
+        internal static string FindSibling(string section)
+        {
+            string executable = BundleFolders.ExecutableDirectory;
+            string saved = ApplicationStorage.FilePath("library-source.txt");
+            if (File.Exists(saved))
+            {
+                string libraries = File.ReadAllText(saved).Trim().TrimEnd('\\', '/');
+                if (Path.IsPathRooted(libraries) && Path.GetFileName(libraries).Equals("_libraries", StringComparison.OrdinalIgnoreCase))
+                {
+                    string root = Path.GetDirectoryName(libraries);
+                    string sibling = Path.Combine(root, section);
+                    if (!Path.GetFileName(root).Equals("Библиотеки", StringComparison.OrdinalIgnoreCase) &&
+                        Directory.Exists(sibling)) return sibling;
+                }
+            }
+            string local = Path.Combine(executable, section);
+            if (Directory.Exists(local)) return local;
+            string preferred = Path.Combine(BundlePreferences.Load(), section);
+            return Directory.Exists(preferred) ? preferred : Find(executable, section);
+        }
+    }
+}
