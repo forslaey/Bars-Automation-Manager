@@ -1,4 +1,4 @@
-﻿param([string] $OutputDirectory = $PSScriptRoot, [switch] $Sign, [string] $CertificateThumbprint, [string] $TimestampServer = 'http://timestamp.digicert.com', [string] $ReferenceAssemblies)
+param([string] $OutputDirectory = $PSScriptRoot, [switch] $Sign, [string] $CertificateThumbprint, [string] $TimestampServer = 'http://timestamp.digicert.com', [string] $ReferenceAssemblies, [switch] $EmbedWorkstationSettings)
 $ErrorActionPreference = 'Stop'
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { $OutputDirectory = $PSScriptRoot }
 $taskCompiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
@@ -31,6 +31,15 @@ try {
     $taskResources += "/resource:$(Join-Path $taskAssets 'VcArchive7za.bin'),BARS.VcArchive7za"
     $taskResources += "/resource:$(Join-Path $taskAssets 'VcArchive7za-LICENSE.txt'),BARS.VcArchive7zaLicense"
     foreach ($taskArchitecture in @('x86','x64')) { $taskResources += "/resource:$(Join-Path $taskBuild "Installer.$taskArchitecture.exe"),BARS.Helper.$taskArchitecture" }
+    if ($EmbedWorkstationSettings) {
+        foreach ($name in @('BARS_RELEASE_PASSWORD','BARS_REMOTE_STANDARD_PASSWORD')) {
+            $value = [Environment]::GetEnvironmentVariable($name)
+            if ([String]::IsNullOrEmpty($value)) { throw "Для внутренней сборки задай $name." }
+            $data = Join-Path $taskBuild $name
+            [IO.File]::WriteAllText($data, $value)
+            $taskResources += "/resource:$data,$name,private"
+        }
+    }
     $taskStaged = Join-Path $taskBuild 'Bars.Automation.Manager.exe'
     & $taskCompiler @taskCommon @taskResources '/platform:anycpu' "/out:$taskStaged" @taskSources
     if ($LASTEXITCODE -ne 0) { throw "Ошибка компиляции: $LASTEXITCODE" }
@@ -45,7 +54,7 @@ try {
     Write-Output "Собрано: $taskBinary (один файл; установщики x86/x64 встроены)"
 }
 finally {
-    foreach ($taskName in @('Installer.x86.exe','Installer.x64.exe','Bars.Automation.Manager.exe')) {
+    foreach ($taskName in @('Installer.x86.exe','Installer.x64.exe','Bars.Automation.Manager.exe','BARS_RELEASE_PASSWORD','BARS_REMOTE_STANDARD_PASSWORD')) {
         $taskFile = Join-Path $taskBuild $taskName
         if (Test-Path -LiteralPath $taskFile) { Remove-Item -LiteralPath $taskFile -Force }
     }

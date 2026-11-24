@@ -370,6 +370,8 @@ namespace ServiceTool
     {
         private readonly BrandTextBox input=new BrandTextBox(),confirmation=new BrandTextBox();
         private readonly string id;
+        private readonly BrandCheckBox standard = new BrandCheckBox();
+        private readonly string standardPassword;
         private readonly System.Windows.Forms.Timer keyboardTimer=new System.Windows.Forms.Timer();
         private readonly ToolTip keyboardTips=new ToolTip();
         private readonly BrandButton ok;private readonly Label validation;private readonly Image logo;
@@ -378,8 +380,8 @@ namespace ServiceTool
         internal SoftwareRemoteDialog(ThemePalette colors,Icon icon,string appId)
         {
             NativeWindowTheme.Bind(this,()=>colors.Dark);
-            SuspendLayout();id=appId;Text="Неконтролируемый доступ к "+SoftwareCatalog.Find(id).Name;Icon=icon==null?BrandAssets.LoadIcon():(Icon)icon.Clone();AutoScaleDimensions=new SizeF(96,96);AutoScaleMode=AutoScaleMode.None;ClientSize=new Size(660,416);Font=new Font("Segoe UI",10);BackColor=colors.Canvas;ForeColor=colors.Text;StartPosition=FormStartPosition.CenterParent;FormBorderStyle=FormBorderStyle.FixedDialog;MaximizeBox=MinimizeBox=false;
-            var layout=new BufferedLayoutPanel {Dock=DockStyle.Fill,Padding=new Padding(24,18,24,30),ColumnCount=1,RowCount=10};layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));foreach(int h in new[]{70,24,38,24,38,24,26,0,76,44})layout.RowStyles.Add(new RowStyle(SizeType.Absolute,h));
+            SuspendLayout();id=appId;Text="Неконтролируемый доступ к "+SoftwareCatalog.Find(id).Name;Icon=icon==null?BrandAssets.LoadIcon():(Icon)icon.Clone();AutoScaleDimensions=new SizeF(96,96);AutoScaleMode=AutoScaleMode.None;ClientSize=new Size(660,450);Font=new Font("Segoe UI",10);BackColor=colors.Canvas;ForeColor=colors.Text;StartPosition=FormStartPosition.CenterParent;FormBorderStyle=FormBorderStyle.FixedDialog;MaximizeBox=MinimizeBox=false;
+            var layout=new BufferedLayoutPanel {Dock=DockStyle.Fill,Padding=new Padding(24,18,24,30),ColumnCount=1,RowCount=11};layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));foreach(int h in new[]{70,24,38,24,38,24,26,34,0,76,44})layout.RowStyles.Add(new RowStyle(SizeType.Absolute,h));
             var heading=new BufferedLayoutPanel {Dock=DockStyle.Fill,ColumnCount=2,RowCount=1,Margin=Padding.Empty};heading.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));heading.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,64));heading.RowStyles.Add(new RowStyle(SizeType.Percent,100));
             heading.Controls.Add(new FlushLabel {WrapLines=true,InkLeft=g=>0,Text="Постоянный пароль для "+SoftwareCatalog.Find(id).Name+".\r\nПодключение без подтверждения на этом компьютере.",Dock=DockStyle.Fill,ForeColor=colors.Text,TextAlign=ContentAlignment.MiddleLeft,Margin=Padding.Empty},0,0);
             logo=BrandAssets.LoadSoftwareIcon(id);PictureBox appIcon = id == "rudesktop" ? new SmoothSoftwareIcon() : new PictureBox();
@@ -394,19 +396,59 @@ namespace ServiceTool
             var languageRow=new BufferedLayoutPanel{Dock=DockStyle.Fill,ColumnCount=4,RowCount=1,Margin=Padding.Empty};
             languageRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));foreach(int width in new[]{10,40,28})languageRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,width));languageRow.RowStyles.Add(new RowStyle(SizeType.Percent,100));
             var language=new KeyboardLanguageLabel{Name="keyboardLanguage",Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleRight,Padding=new Padding(0,0,1,0),ForeColor=colors.Dark?colors.Warning:Color.FromArgb(190,35,35),Font=new Font("Segoe UI",10F,FontStyle.Bold),Margin=Padding.Empty};languages.Add(language);languageRow.Controls.Add(language,0,0);layout.Controls.Add(languageRow,0,5);
+            standardPassword = BarsWorkstationSettings.Read(BarsWorkstationSettings.RemotePassword);
+            standard.Text = "Стандартный пароль Барса";
+            standard.Palette = colors;
+            standard.Dock = DockStyle.Fill;
+            standard.Margin = new Padding(0, 2, 0, 2);
+            layout.Controls.Add(standard, 0, 7);
             validation=new FlushLabel {InkLeft=g=>0,Text="От 8 до 128 символов",TextAlign=ContentAlignment.MiddleLeft,Dock=DockStyle.None,ForeColor=colors.Muted,Margin=Padding.Empty,Font=new Font("Segoe UI",9)};
-            layout.Controls.Add(new Label {Text=id=="rudesktop"?"Во время настройки администратор этого компьютера может увидеть пароль в параметрах запуска RuDesktop.":"Пароль передаётся напрямую в AnyDesk. В журнале менеджера он не сохраняется.",Dock=DockStyle.Fill,Name="passwordNotice",TextAlign=ContentAlignment.MiddleLeft,ForeColor=colors.Dark?colors.Warning:Color.FromArgb(190,35,35),Font=new Font("Segoe UI",9),Margin=new Padding(0,12,0,16)},0,8);
+            layout.Controls.Add(new Label {Text=id=="rudesktop"?"Во время настройки администратор этого компьютера может увидеть пароль в параметрах запуска RuDesktop.":"Пароль передаётся напрямую в AnyDesk. В журнале менеджера он не сохраняется.",Dock=DockStyle.Fill,Name="passwordNotice",TextAlign=ContentAlignment.MiddleLeft,ForeColor=colors.Dark?colors.Warning:Color.FromArgb(190,35,35),Font=new Font("Segoe UI",9),Margin=new Padding(0,12,0,16)},0,9);
             var actions=new BufferedLayoutPanel {Dock=DockStyle.Fill,ColumnCount=3,RowCount=1,Margin=Padding.Empty};actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,50));actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,12));actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,50));actions.RowStyles.Add(new RowStyle(SizeType.Percent,100));
             var cancel=new BrandButton {Text="Отмена",Palette=colors,Dock=DockStyle.Fill,DialogResult=DialogResult.Cancel,Margin=Padding.Empty};actions.Controls.Add(cancel,2,0);
             ok=new BrandButton {Text="Продолжить",Palette=colors,Primary=true,Dock=DockStyle.Fill,Margin=Padding.Empty,Enabled=false};
-            Action validate=delegate{ok.Enabled=PasswordsMatch(input.Text,confirmation.Text);validation.Text=input.Text.Length<8?"Введи не менее 8 символов":!String.Equals(input.Text,confirmation.Text,StringComparison.Ordinal)?"Пароли не совпадают":"Пароли совпадают";};input.TextChanged+=delegate{validate();};confirmation.TextChanged+=delegate{validate();};
+            Action validate = delegate
+            {
+                if (standard.Checked)
+                {
+                    ok.Enabled = PasswordsMatch(standardPassword, standardPassword);
+                    validation.Text = ok.Enabled ? "Выбран стандартный пароль Барса" : "Стандартный пароль не настроен";
+                    return;
+                }
+                ok.Enabled = PasswordsMatch(input.Text, confirmation.Text);
+                validation.Text = input.Text.Length < 8 ? "Введи не менее 8 символов" :
+                    !String.Equals(input.Text, confirmation.Text, StringComparison.Ordinal) ? "Пароли не совпадают" : "Пароли совпадают";
+            };
+            input.TextChanged += delegate { validate(); };
+            confirmation.TextChanged += delegate { validate(); };
+            standard.CheckedChanged += delegate
+            {
+                bool manual = !standard.Checked;
+                input.Enabled = confirmation.Enabled = manual;
+                foreach (var box in new[] { input, confirmation })
+                {
+                    box.UseSystemPasswordChar = true;
+                    box.BackColor = manual ? colors.SurfaceAlt : colors.DisabledSurface;
+                    box.Parent.Invalidate();
+                }
+                foreach (var eye in eyes)
+                {
+                    eye.Enabled = manual;
+                    eye.Revealed = false;
+                    eye.AccessibleName = "Показать пароль";
+                    eye.Invalidate();
+                }
+                UpdateKeyboard();
+                validate();
+            };
             ok.Click += delegate
             {
-                if (!PasswordsMatch(input.Text, confirmation.Text)) return;
-                Password = input.Text;
+                string value = standard.Checked ? standardPassword : input.Text;
+                if (!PasswordsMatch(value, standard.Checked ? value : confirmation.Text)) return;
+                Password = value;
                 DialogResult = DialogResult.OK;
             };
-            actions.Controls.Add(ok,0,0);layout.Controls.Add(actions,0,9);Controls.Add(layout);var validationHost=new Panel{Dock=DockStyle.Fill,Margin=Padding.Empty};layout.Controls.Remove(languageRow);languageRow.Controls.Remove(language);validationHost.Controls.Add(language);language.Dock=DockStyle.None;language.Anchor=AnchorStyles.Top|AnchorStyles.Right;language.Padding=Padding.Empty;languageRow.Dispose();layout.Controls.Add(validationHost,0,5);layout.SetRowSpan(validationHost,2);validationHost.Controls.Add(validation);validation.BringToFront();bool validationQueued=false;Action placeValidation=()=>{if(!confirmation.IsHandleCreated||!validationHost.IsHandleCreated||IsDisposed)return;var confirmationFrame=confirmation.Parent;int upper=PointToClient(confirmationFrame.PointToScreen(new Point(0,confirmationFrame.Height))).Y;int lower=PointToClient(validationHost.PointToScreen(new Point(0,validationHost.Height))).Y;int height=validation.Font.Height;int left=PointToClient(confirmationFrame.PointToScreen(Point.Empty)).X;validation.Bounds=new Rectangle(validationHost.PointToClient(PointToScreen(new Point(left,upper+(lower-upper-height)/2))).X,validationHost.PointToClient(PointToScreen(new Point(left,upper+(lower-upper-height)/2))).Y,confirmationFrame.Width,height);using(var graphics=language.CreateGraphics()){int languageWidth=TextRenderer.MeasureText(graphics,"ENG",language.Font,Size.Empty,TextFormatFlags.SingleLine).Width+12;int languageHeight=language.Font.Height+6;var fieldBottom=validationHost.PointToClient(confirmationFrame.PointToScreen(new Point(confirmationFrame.Width,confirmationFrame.Height)));language.Bounds=new Rectangle(fieldBottom.X-languageWidth,Math.Max(0,fieldBottom.Y+2),languageWidth,languageHeight);validation.Width=Math.Max(1,language.Left-validation.Left-8);}language.BringToFront();};Action queueValidation=()=>{if(validationQueued||!IsHandleCreated||IsDisposed)return;validationQueued=true;BeginInvoke((MethodInvoker)delegate{validationQueued=false;placeValidation();});};layout.Layout+=delegate{queueValidation();};Shown+=delegate{queueValidation();};CancelButton=cancel;AcceptButton=ok;
+            actions.Controls.Add(ok,0,0);layout.Controls.Add(actions,0,10);Controls.Add(layout);var validationHost=new Panel{Dock=DockStyle.Fill,Margin=Padding.Empty};layout.Controls.Remove(languageRow);languageRow.Controls.Remove(language);validationHost.Controls.Add(language);language.Dock=DockStyle.None;language.Anchor=AnchorStyles.Top|AnchorStyles.Right;language.Padding=Padding.Empty;languageRow.Dispose();layout.Controls.Add(validationHost,0,5);layout.SetRowSpan(validationHost,2);validationHost.Controls.Add(validation);validation.BringToFront();bool validationQueued=false;Action placeValidation=()=>{if(!confirmation.IsHandleCreated||!validationHost.IsHandleCreated||IsDisposed)return;var confirmationFrame=confirmation.Parent;int upper=PointToClient(confirmationFrame.PointToScreen(new Point(0,confirmationFrame.Height))).Y;int lower=PointToClient(validationHost.PointToScreen(new Point(0,validationHost.Height))).Y;int height=validation.Font.Height;int left=PointToClient(confirmationFrame.PointToScreen(Point.Empty)).X;validation.Bounds=new Rectangle(validationHost.PointToClient(PointToScreen(new Point(left,upper+(lower-upper-height)/2))).X,validationHost.PointToClient(PointToScreen(new Point(left,upper+(lower-upper-height)/2))).Y,confirmationFrame.Width,height);using(var graphics=language.CreateGraphics()){int languageWidth=TextRenderer.MeasureText(graphics,"ENG",language.Font,Size.Empty,TextFormatFlags.SingleLine).Width+12;int languageHeight=language.Font.Height+6;var fieldBottom=validationHost.PointToClient(confirmationFrame.PointToScreen(new Point(confirmationFrame.Width,confirmationFrame.Height)));language.Bounds=new Rectangle(fieldBottom.X-languageWidth,Math.Max(0,fieldBottom.Y+2),languageWidth,languageHeight);validation.Width=Math.Max(1,language.Left-validation.Left-8);}language.BringToFront();};Action queueValidation=()=>{if(validationQueued||!IsHandleCreated||IsDisposed)return;validationQueued=true;BeginInvoke((MethodInvoker)delegate{validationQueued=false;placeValidation();});};layout.Layout+=delegate{queueValidation();};Shown+=delegate{queueValidation();};CancelButton=cancel;AcceptButton=ok;
             keyboardTips.IsBalloon=true;keyboardTips.ToolTipIcon=ToolTipIcon.Warning;keyboardTips.ToolTipTitle="Caps Lock включён";keyboardTimer.Interval=200;keyboardTimer.Tick+=delegate{UpdateKeyboard();};Shown+=delegate{keyboardTimer.Start();};InputLanguageChanged+=delegate{UpdateKeyboard();};
             AutoScaleMode=AutoScaleMode.Dpi;ResumeLayout(true);
         }
@@ -456,7 +498,7 @@ namespace ServiceTool
         internal void UpdateKeyboardState(string code,bool capsLocked)
         {
             string text=LanguageLabel(code);foreach(var label in languages)label.Text=text;
-            bool on=capsLocked;foreach(var label in caps){if(label.Visible!=on)label.Visible=on;if(!on&&capsWasOn)keyboardTips.Hide(label);}
+            bool on=capsLocked&&!standard.Checked;foreach(var label in caps){if(label.Visible!=on)label.Visible=on;if(!on&&capsWasOn)keyboardTips.Hide(label);}
             bool showWarning = on && !capsWasOn && (input.Focused || confirmation.Focused);
             capsWasOn = on;
             if (showWarning && Visible)

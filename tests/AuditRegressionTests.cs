@@ -56,8 +56,8 @@ namespace ServiceTool
                 }
                 using (var dialog = new SoftwareRemoteDialog(ThemePalette.Create(false), null, "anydesk"))
                 {
-                    Check(!dialog.Controls.OfType<TableLayoutPanel>().SelectMany(p => p.Controls.OfType<CheckBox>()).Any(c => c.Text.Contains("стандартный пароль")),
-                        "Remote dialog must not offer an embedded password.");
+                    Check(dialog.Controls.OfType<TableLayoutPanel>().SelectMany(p => p.Controls.OfType<CheckBox>()).Any(c => c.Text == "Стандартный пароль Барса" && !c.Checked),
+                        "Standard password option must be available and unchecked by default.");
                 }
                 IDisposable lease;
                 Check(WindowsOperationQueue.TryEnter(out lease), "Queue initially available.");

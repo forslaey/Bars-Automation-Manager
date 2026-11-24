@@ -34,9 +34,13 @@ namespace ServiceTool
             public string Version, Channel;
         }
 
-        internal void Login(string login, string password, CancellationToken token)
+        internal void Login(CancellationToken token)
         {
-            string body = json.Serialize(new { userName = login, password = password });
+            token.ThrowIfCancellationRequested();
+            string password = BarsWorkstationSettings.Read(BarsWorkstationSettings.CatalogPassword);
+            if (String.IsNullOrEmpty(password))
+                throw new InvalidOperationException("Доступ к каталогу Барс не настроен на этом компьютере. Обратись к администратору.");
+            string body = json.Serialize(new { userName = "service", password = password });
             Read("/api/auth/login", body, token, response => true);
         }
 

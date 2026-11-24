@@ -1,10 +1,11 @@
-﻿param(
+param(
     [Parameter(Mandatory=$true)][string]$OutputDirectory,
     [string]$Cargo = 'cargo.exe',
     [string]$ResourceCompiler = 'rsrc.exe',
     [switch]$Sign,
     [string]$CertificateThumbprint,
-    [string]$TimestampServer = 'http://timestamp.digicert.com'
+    [string]$TimestampServer = 'http://timestamp.digicert.com',
+    [switch]$EmbedWorkstationSettings
 )
 $ErrorActionPreference = 'Stop'
 $project = Split-Path -Parent $PSScriptRoot
@@ -27,7 +28,7 @@ try {
         $env:RUSTUP_HOME = Join-Path $localRust 'rustup'
         $env:CARGO_HOME = Join-Path $localRust 'cargo'
     }
-    $options = @{OutputDirectory=$stage; Sign=$Sign; CertificateThumbprint=$CertificateThumbprint; TimestampServer=$TimestampServer}
+    $options = @{OutputDirectory=$stage; Sign=$Sign; CertificateThumbprint=$CertificateThumbprint; TimestampServer=$TimestampServer; EmbedWorkstationSettings=$EmbedWorkstationSettings}
     & (Join-Path $project 'Build.ps1') @options
     $manager = Get-ChildItem -LiteralPath $stage -Filter 'Bars.Automation.Manager.*.exe' | Select-Object -First 1
     if (!$manager) { throw 'Не найден EXE встроенного менеджера.' }

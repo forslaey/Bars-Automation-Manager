@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Drawing;
 using System.IO;
 using System.Linq;
@@ -36,12 +36,26 @@ namespace ServiceTool {
    Check(SoftwareMaintenance.MachineSettings("chrome").Length==0,"Chrome never cleans RuDesktop settings");
    Check(!SoftwareDetection.ShouldInstall(new SoftwareCheck{State=LibraryState.Installed,Version=chrome.Version},chrome),"Equal Chrome skipped");
    string msi=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,chrome.File);if(File.Exists(msi)){var actual=SoftwareCatalog.Describe("chrome",msi,"fixture read only");Check(actual.Architecture=="x64"&&actual.Version==chrome.Version,"Actual Google MSI metadata");SoftwareTrust.Verify(actual,false);Check(true,"Actual Google signature verified");}
+   Environment.SetEnvironmentVariable(BarsWorkstationSettings.RemotePassword, "FixtureStandard123!");
    foreach(bool dark in new[]{false,true})foreach(string id in new[]{"anydesk","rudesktop"})using(var dialog=new SoftwareRemoteDialog(ThemePalette.Create(dark),null,id)){
     Show(dialog);var input=Field<BrandTextBox>(dialog,"input");var confirmation=Field<BrandTextBox>(dialog,"confirmation");
     Check(input.Text.Length==0&&confirmation.Text.Length==0&&dialog.Password==null,"Password starts empty");
     input.Text="custom123";confirmation.Text="custom123";
     Check(input.Enabled&&confirmation.Enabled&&SoftwareRemoteDialog.PasswordsMatch(input.Text,confirmation.Text)&&((Control)dialog.AcceptButton).Enabled,"Manual password entry and confirmation");
-    Check(!All(dialog).OfType<BrandCheckBox>().Any(c=>c.Text.Contains("стандартный пароль")),"No embedded password option");
+    var standard=All(dialog).OfType<BrandCheckBox>().Single(c=>c.Text=="Стандартный пароль Барса");
+    Check(!standard.Checked && standard.PointToScreen(Point.Empty).Y>=confirmation.Parent.PointToScreen(new Point(0,confirmation.Parent.Height)).Y,"Unchecked standard option below confirmation");
+    standard.Checked=true;
+    Check(!input.Enabled&&!confirmation.Enabled&&All(dialog).OfType<PasswordEyeButton>().All(eye=>!eye.Enabled)&&((Control)dialog.AcceptButton).Enabled,"Standard option disables manual fields and eyes");
+    standard.Checked=false;
+    Check(input.Enabled&&confirmation.Enabled&&input.Text=="custom123"&&confirmation.Text=="custom123","Manual fields restore their values");
+    using(var preset=new SoftwareRemoteDialog(ThemePalette.Create(dark),null,id))
+    {
+     Show(preset);
+     All(preset).OfType<BrandCheckBox>().Single().Checked=true;
+     ((Button)preset.AcceptButton).PerformClick();
+     Check(preset.Password=="FixtureStandard123!"&&preset.DialogResult==DialogResult.OK,"Configured standard value returned");
+     preset.Close();
+    }
     foreach(var eye in All(dialog).OfType<PasswordEyeButton>()){eye.PerformClick();Check(eye.Revealed,"Eye reveals independently");eye.PerformClick();Check(!eye.Revealed,"Eye hides");}
     dialog.UpdateKeyboardState("en",true);Check(Field<List<Label>>(dialog,"caps").All(l=>l.Visible),"Caps Lock warnings visible for both fields");Check(Field<List<Label>>(dialog,"languages").All(l=>l.Text=="ENG"),"English indicator updates");dialog.UpdateKeyboardState("ru",false);Check(Field<List<Label>>(dialog,"caps").All(l=>!l.Visible),"Caps Lock warning clears");Check(Field<List<Label>>(dialog,"languages").All(l=>l.Text=="РУС"),"Russian indicator updates");
     ((Button)dialog.AcceptButton).PerformClick();Check(dialog.Password=="custom123","Confirmed password returned");

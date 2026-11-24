@@ -356,18 +356,10 @@ namespace ServiceTool
 
         private async void Scan(object sender, EventArgs args)
         {
-            string login, password;
-            using (var credentials = new BarsReleaseLoginDialog(Colors, Icon))
-            {
-                if (ScopedDialogs.Show(this, credentials) != DialogResult.OK) return;
-                login = credentials.Login;
-                password = credentials.Password;
-            }
             await Run("Проверяем каталог Bars.Release", false, token =>
             {
                 var next = new BarsReleaseCatalog();
-                try { next.Login(login, password, token); }
-                finally { password = null; }
+                next.Login(token);
                 var found = next.Scan(services, token);
                 catalog = next;
                 remote = found;
@@ -553,50 +545,5 @@ namespace ServiceTool
         }
 
         private void Log(string text) { journal.AppendText(DateTime.Now.ToString("HH:mm:ss") + "  " + text + Environment.NewLine); }
-    }
-
-    internal sealed class BarsReleaseLoginDialog : BrandWindow
-    {
-        private readonly BrandTextBox login, password;
-        internal string Login { get { return login.Text.Trim(); } }
-        internal string Password { get { return password.Text; } }
-
-        internal BarsReleaseLoginDialog(ThemePalette colors, Icon icon)
-        {
-            Text = "Вход в Bars.Release";
-            Icon = icon;
-            ClientSize = new Size(500, 220);
-            AutoScaleDimensions = new SizeF(96, 96);
-            AutoScaleMode = AutoScaleMode.Dpi;
-            StartPosition = FormStartPosition.CenterParent;
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            MinimizeBox = MaximizeBox = false;
-            ShowInTaskbar = false;
-            Font = new Font("Segoe UI", 10);
-            BackColor = colors.Canvas;
-            ForeColor = colors.Text;
-            NativeWindowTheme.Bind(this, () => colors.Dark);
-            var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Padding = new Padding(24, 16, 24, 16) };
-            foreach (int height in new[] { 26, 36, 26, 36, 52 }) layout.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
-            login = new BrandTextBox { Dock = DockStyle.Fill, Palette = colors, BackColor = colors.SurfaceAlt, ForeColor = colors.Text };
-            password = new BrandTextBox { Dock = DockStyle.Fill, Palette = colors, BackColor = colors.SurfaceAlt, ForeColor = colors.Text, UseSystemPasswordChar = true };
-            layout.Controls.Add(new Label { Text = "Логин", Dock = DockStyle.Fill }, 0, 0);
-            layout.Controls.Add(new PathFieldFrame(login), 0, 1);
-            layout.Controls.Add(new Label { Text = "Пароль", Dock = DockStyle.Fill }, 0, 2);
-            layout.Controls.Add(new PathFieldFrame(password), 0, 3);
-            var footer = new TableLayoutPanel { Dock = DockStyle.Fill };
-            var back = new BrandButton { Text = "Отмена", Palette = colors, DialogResult = DialogResult.Cancel };
-            var enter = new BrandButton { Text = "Войти", Palette = colors, Primary = true, DialogResult = DialogResult.OK, Enabled = false };
-            EventHandler update = delegate { enter.Enabled = Login.Length > 0 && Password.Length > 0; };
-            login.TextChanged += update;
-            password.TextChanged += update;
-            footer.Controls.Add(back);
-            footer.Controls.Add(enter);
-            ModuleNavigation.StandardFooter(footer, back, enter);
-            layout.Controls.Add(footer, 0, 4);
-            Controls.Add(layout);
-            AcceptButton = enter;
-            CancelButton = back;
-        }
     }
 }
