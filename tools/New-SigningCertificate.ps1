@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param([string] $PublicDirectory, [switch] $Rotate)
 $ErrorActionPreference = 'Stop'
 if ([string]::IsNullOrWhiteSpace($PublicDirectory)) { $PublicDirectory = Join-Path (Split-Path $PSScriptRoot -Parent) 'signing' }
@@ -14,8 +14,8 @@ if (-not $Rotate -and (Test-Path -LiteralPath $taskSettings)) {
     throw 'Сохранённый сертификат недоступен или истёк. Сначала восстанови его из резервной копии; новый автоматически не создаётся.'
 }
 $taskCertificate = New-SelfSignedCertificate -Type CodeSigningCert `
-    -Subject 'CN=Менеджер автоматизации Барс (Павел Шаклеин), O=ДатаКрат - ОТЭиВ, E=junior@aniello.ru' `
-    -FriendlyName 'Менеджер автоматизации Барс — подпись Павла Шаклеина' `
+    -Subject 'CN=Шаклеин Павел Эдуардович, O=ДатаКрат - ОТЭиВ, E=junior@aniello.ru' `
+    -FriendlyName 'Шаклеин Павел Эдуардович — подпись Менеджера автоматизации Барс' `
     -CertStoreLocation 'Cert:\CurrentUser\My' -KeyAlgorithm RSA -KeyLength 3072 `
     -HashAlgorithm SHA256 -KeyUsage DigitalSignature -KeyExportPolicy Exportable `
     -Provider 'Microsoft Software Key Storage Provider' -NotAfter (Get-Date).AddYears(3)

@@ -21,7 +21,7 @@ namespace ServiceTool
         private const string Repository = "forslaey/Bars-Automation-Manager";
         private const string ReleaseFilePrefix = "Bars.Automation.Manager.";
         internal const string RepositoryUrl = "https://github.com/" + Repository;
-        private const string Certificate = "6953D55E71360D565B095F1BF0B1442B4A211A93";
+        private const string Certificate = "5E05A9087A2BA3FF1186A72825CCA1B40B73B7EB";
         private static bool busy;
         internal static bool CheckInProgress { get { return busy; } }
         private static Version notified;
