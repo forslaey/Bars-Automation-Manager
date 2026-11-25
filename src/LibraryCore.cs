@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -51,7 +51,9 @@ namespace ServiceTool
     {
         public static string AutoDetect(string executableDirectory)
         {
-            return FindAdjacent(executableDirectory) ?? FindAdjacent(BundlePreferences.Load()) ?? FindAdjacent(BundleFolders.DefaultRoot);
+            string discovered = BundlePreferences.DiscoveredRoot(BundleSection.Libraries);
+            return (discovered == null ? null : FindAdjacent(discovered)) ?? FindAdjacent(executableDirectory) ??
+                FindAdjacent(BundlePreferences.Load(BundleSection.Libraries)) ?? FindAdjacent(BundleFolders.DefaultRoot);
         }
         internal static string FindAdjacent(string root)
         {

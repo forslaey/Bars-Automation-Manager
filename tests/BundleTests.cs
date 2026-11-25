@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Threading;
 using System.Linq;
@@ -25,7 +25,33 @@ namespace ServiceTool
     Check(!receipts.CanReplace(file,new string('0',64)),"Edited managed installer protected");
     var config=new BundleRemoteFile {Path="/_tools/test.ini",Sha256=hash};receipts.Record(config);Check(!receipts.CanReplace(config,hash),"Configuration protected");
     var utility=new BundleRemoteFile {Path="/_tools/tool.exe",Sha256=hash};receipts.Record(utility);Check(!receipts.CanReplace(utility,hash),"Utility tree protected");
-    Check(BundleTransfer.PartPath(root,file).Contains(hash),"Part keyed by remote content");
+    var revised = new BundleRemoteFile { Path=file.Path, Sha256=new string('a',64), Size=file.Size };
+    Check(BundleTransfer.PartPath(root,file)!=BundleTransfer.PartPath(root,revised),"Part keyed by remote content at any path length");
+    string deep = Path.Combine(root, new string('d', Math.Max(8, 153 - root.Length)));
+    string deepPart = BundleTransfer.PartPath(deep, new BundleRemoteFile { Path="/fixture.exe", Sha256=hash, Size=file.Size });
+    Directory.CreateDirectory(Path.GetDirectoryName(deepPart));
+    File.Copy(local, deepPart);
+    BundlePackageIdentity.Read(deepPart, "/fixture.exe");
+    Check(File.Exists(deepPart) && deepPart.Length < 230,"Checking metadata retains content in a long directory");
+    var legacyFile = new BundleRemoteFile { Path="/legacy.zip", Sha256=hash, Size=file.Size };
+    string legacyRoot = Path.Combine(root, new string('l', Math.Max(8, 156 - root.Length)));
+    string legacyRelative = "/.bars-download/" + hash + "/legacy.zip.part";
+    string legacyPart = YandexBundleSource.LocalPath(legacyRoot, legacyRelative);
+    if (legacyPart.Length > 230 && legacyPart.Length < 260)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(legacyPart));
+        File.Copy(local, legacyPart);
+        new BundleTransfer(new YandexBundleSource()).Download(legacyFile, legacyRoot, null, _ => { }, CancellationToken.None);
+        Check(!File.Exists(legacyPart) && File.Exists(BundleFolders.PackageDestination(legacyRoot, legacyFile.Path)),
+            "Existing partial download migrates without network");
+    }
+    var discoveredRoot = Directory.CreateDirectory(Path.Combine(root, "adjacent")).FullName;
+    for (int n = 0; n < 65; n++) Directory.CreateDirectory(Path.Combine(discoveredRoot, "folder-" + n.ToString("D3")));
+    string foundAfterOldLimit = Directory.EnumerateDirectories(discoveredRoot).Skip(64).First();
+    Directory.CreateDirectory(Path.Combine(foundAfterOldLimit, "_tools"));
+    File.WriteAllText(Path.Combine(foundAfterOldLimit, "_tools", "fixture.zip"), "fixture");
+    Check(BundleDiscovery.Find(BundleSection.Tools,null,null,null,new[] { discoveredRoot },CancellationToken.None)
+        .Any(candidate => candidate.Root == foundAfterOldLimit), "Finds a bundle beyond the previous 64-folder limit");
     var same=new BundleRemoteFile {Path="/another.exe",Sha256=hash,Size=file.Size};
     Check(BundleTransfer.PartPath(root,file)!=BundleTransfer.PartPath(root,same),"Identical content independent parts");
     string part=BundleTransfer.PartPath(root,same);Directory.CreateDirectory(Path.GetDirectoryName(part));File.Copy(local,part);
@@ -37,6 +63,17 @@ namespace ServiceTool
     bool blocked=false;try{new BundleTransfer(new YandexBundleSource()).Download(conflict,root,hash,bytes=>{},CancellationToken.None);}catch(IOException){blocked=true;}
     Check(blocked&&File.ReadAllText(target)=="user changed","Destination conflict preserves original");
     Check(File.Exists(conflictPart),"Conflict preserves verified replacement");
+    bool appeared = false;
+    try { BundlePublication.Publish(conflictPart, target, null, CancellationToken.None, null); }
+    catch(IOException) { appeared = true; }
+    Check(appeared && File.ReadAllText(target) == "user changed" && File.Exists(conflictPart),
+        "Publication preserves a file created after the queue snapshot");
+    var versions = new[] { "Bars.Administrator_v2.12.2.168.exe", "Bars.Administrator_v2.12.1.166.exe" };
+    Check(BarsPackagesForm.ApplyFolders(versions.Take(1), false).Single() == "Administrator", "Single installer retains its folder");
+    bool duplicatePrograms = false, duplicateServices = false;
+    try { BarsPackagesForm.ApplyFolders(versions, false); } catch (IOException) { duplicatePrograms = true; }
+    try { BarsPackagesForm.ApplyFolders(new[] { "Agent.zip", "agent.rar" }, true); } catch (IOException) { duplicateServices = true; }
+    Check(duplicatePrograms && duplicateServices, "Install and extract plans reject shared target folders");
     using(var cancel=new CancellationTokenSource()){cancel.Cancel();bool cancelled=false;try{new BundleTransfer(new YandexBundleSource()).Download(file,root,hash,bytes=>{},cancel.Token);}catch(OperationCanceledException){cancelled=true;}Check(cancelled,"Cancelled before network");}
     using(var form=new BundleDownloadForm()){form.Show();System.Windows.Forms.Application.DoEvents();Check(form.Visible,"Window opens without network");}
     BundleSession.Save(root,new[]{file,same});var saved=BundleSession.Load(root);Check(saved.Contains(file.Path+"|"+hash)&&saved.Count==2,"Queue persists content identity");

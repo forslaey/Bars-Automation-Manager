@@ -59,6 +59,14 @@ namespace ServiceTool
 
         internal static string FindSibling(string section)
         {
+            BundleSection kind = section == "_tools" ? BundleSection.Tools : section == "_soft" ? BundleSection.Software :
+                section == "_wallpers" ? BundleSection.Wallpapers : BundleSection.Any;
+            string discovered = BundlePreferences.DiscoveredRoot(kind);
+            if (discovered != null)
+            {
+                string path = Path.Combine(discovered, section);
+                if (Directory.Exists(path)) return path;
+            }
             string executable = BundleFolders.ExecutableDirectory;
             string saved = ApplicationStorage.FilePath("library-source.txt");
             if (File.Exists(saved))

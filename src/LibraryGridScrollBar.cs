@@ -29,11 +29,13 @@ namespace ServiceTool
         private bool dragging; private int dragOffset;
         private bool correcting;
         private bool viewportPending,updatingViewport;
+        private List<int> visibleRows;
         internal bool UseCardBackground {get;set;}
         internal int MaximumThumbLength {get;set;}
         internal bool LimitTrackToWholeRows {get;set;}
         internal Color TrackBackground {get{return Palette==null?BackColor:UseCardBackground?Palette.Surface:Palette.Canvas;}}
         internal bool AutoHideWhenUnused {get;set;}
+        internal bool DeferScrollCorrection {get;set;}
         private void QueueViewport()
         {
             if(viewportPending||!IsHandleCreated||IsDisposed)return;viewportPending=true;
@@ -48,7 +50,7 @@ namespace ServiceTool
                 if(AutoHideWhenUnused)
                 {
                     int height=grid.ColumnHeadersVisible?grid.ColumnHeadersHeight:0;
-                    foreach(DataGridViewRow row in grid.Rows)if(row.Visible)height+=row.Height;
+                    height += grid.Rows.GetRowsHeight(DataGridViewElementStates.Visible);
                     Visible=height>grid.ClientSize.Height;
                 }
                 CorrectPosition();Invalidate();
@@ -67,19 +69,30 @@ namespace ServiceTool
         public void Bind(DataGridView target)
         {
             grid = target;AlignToRows=true;
-            grid.RowsAdded+=delegate{QueueViewport();};grid.RowsRemoved+=delegate{QueueViewport();};grid.SizeChanged+=delegate{QueueViewport();};grid.RowHeightChanged+=delegate{QueueViewport();};grid.ColumnWidthChanged+=delegate{QueueViewport();};grid.DataBindingComplete+=delegate{QueueViewport();};grid.VisibleChanged+=delegate{QueueViewport();};grid.BackgroundColorChanged+=delegate{QueueViewport();};
-            grid.RowStateChanged+=delegate(object sender,DataGridViewRowStateChangedEventArgs e){if((e.StateChanged&(DataGridViewElementStates.Visible|DataGridViewElementStates.Frozen))!=0)QueueViewport();};
-            grid.Scroll += delegate { CorrectPosition(); Invalidate(); };
+            grid.RowsAdded+=delegate{RowsChanged();};grid.RowsRemoved+=delegate{RowsChanged();};grid.SizeChanged+=delegate{QueueViewport();};grid.RowHeightChanged+=delegate{QueueViewport();};grid.ColumnWidthChanged+=delegate{QueueViewport();};grid.DataBindingComplete+=delegate{RowsChanged();};grid.VisibleChanged+=delegate{QueueViewport();};grid.BackgroundColorChanged+=delegate{QueueViewport();};
+            grid.RowStateChanged+=delegate(object sender,DataGridViewRowStateChangedEventArgs e){if((e.StateChanged&(DataGridViewElementStates.Visible|DataGridViewElementStates.Frozen))!=0)RowsChanged();};
+            grid.Scroll += delegate
+            {
+                if (DeferScrollCorrection) QueueViewport();
+                else CorrectPosition();
+                Invalidate();
+            };
             grid.MouseWheel += delegate(object sender, MouseEventArgs e) { MoveBy(-Math.Sign(e.Delta) * 3); var handled = e as HandledMouseEventArgs; if (handled != null) handled.Handled = true; };
+        }
+        private void RowsChanged()
+        {
+            visibleRows = null;
+            QueueViewport();
         }
         private List<int> ScrollableRows()
         {
+            if (visibleRows != null) return visibleRows;
             var result=new List<int>();
             if(grid!=null)
                 for(int index=grid.Rows.GetFirstRow(DataGridViewElementStates.Visible);index>=0;
                     index=grid.Rows.GetNextRow(index,DataGridViewElementStates.Visible))
                     if(!grid.Rows[index].Frozen)result.Add(index);
-            return result;
+            return visibleRows = result;
         }
         private int MaximumPosition(List<int> rows)
         {
@@ -96,7 +109,7 @@ namespace ServiceTool
         private int Maximum {get{return MaximumPosition(ScrollableRows());}}
         private int FirstPosition(List<int> rows)
         {
-            return Math.Min(MaximumPosition(rows),Math.Max(0,rows.IndexOf(grid.FirstDisplayedScrollingRowIndex)));
+            return Math.Min(MaximumPosition(rows),Math.Max(0,rows.BinarySearch(grid.FirstDisplayedScrollingRowIndex)));
         }
         private void SetPosition(List<int> rows,int position)
         {

@@ -9,6 +9,36 @@ use windows_sys::Win32::{
 
 
 
+fn fitting_dpi(dpi: i32, width: i32, height: i32, area: RECT) -> i32 {
+    dpi.min((area.right - area.left) * 96 / width)
+        .min((area.bottom - area.top) * 96 / height).max(1)
+}
+
+unsafe fn work_area(owner: HWND) -> RECT {
+    let monitor = if owner.is_null() {
+        MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY)
+    } else {
+        MonitorFromWindow(owner, MONITOR_DEFAULTTONEAREST)
+    };
+    let mut info: MONITORINFO = zeroed();
+    info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+    if GetMonitorInfoW(monitor, &mut info) != 0 { return info.rcWork; }
+    RECT { left: 0, top: 0, right: GetSystemMetrics(SM_CXSCREEN), bottom: GetSystemMetrics(SM_CYSCREEN) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn fits_narrow_portrait_work_area() {
+        let area = RECT { left: -768, top: 0, right: 0, bottom: 984 };
+        let dpi = fitting_dpi(192, 652, 300, area);
+        assert!(652 * dpi / 96 <= 768);
+        assert!(300 * dpi / 96 <= 984);
+        assert_eq!(fitting_dpi(96, 652, 300, area), 96);
+    }
+}
+
 struct State {
     selected: RefCell<Option<PathBuf>>,
     status: Cell<HWND>,
@@ -141,10 +171,14 @@ unsafe fn choose_folder(owner: HWND, dark: bool) -> Option<PathBuf> {
     let mut state=FolderPicker{path:PathBuf::new(),children:Vec::new(),selected:None,edit:null_mut(),list:null_mut(),dark,brush};
     let mut bounds:RECT=zeroed();GetWindowRect(owner,&mut bounds);
     let dc=GetDC(owner);let dpi=if dc.is_null(){96}else{let result=GetDeviceCaps(dc,LOGPIXELSX as i32).max(96);ReleaseDC(owner,dc);result};
-    let px=|value:i32|value*dpi/96;
+    let area = work_area(owner);
+    let dpi = fitting_dpi(dpi, 560, 410, area);
+    let px = |value: i32| value * dpi / 96;
+    let (width, height) = (px(560), px(410));
+    let x = (bounds.left + (bounds.right - bounds.left - width) / 2).clamp(area.left, area.right - width);
+    let y = (bounds.top + (bounds.bottom - bounds.top - height) / 2).clamp(area.top, area.bottom - height);
     let window=CreateWindowExW(0,class_name.as_ptr(),wide("Выбери папку с установщиком").as_ptr(),
-        WS_CAPTION|WS_SYSMENU|WS_THICKFRAME,(bounds.left+(bounds.right-bounds.left-px(560))/2).max(0),
-        (bounds.top+(bounds.bottom-bounds.top-px(410))/2).max(0),px(560),px(410),owner,null_mut(),instance,(&mut state as *mut FolderPicker).cast());
+        WS_CAPTION|WS_SYSMENU,x,y,width,height,owner,null_mut(),instance,(&mut state as *mut FolderPicker).cast());
     if window.is_null(){UnregisterClassW(class_name.as_ptr(),instance);DeleteObject(brush);return None;}
     title_theme(window,dark);
     let font=CreateFontW(-px(16),0,0,0,400,0,0,0,1,0,0,5,0,wide("Segoe UI").as_ptr());
@@ -315,6 +349,9 @@ pub fn show(selected: Option<PathBuf>, text: &str, can_install: bool) {
     unsafe {
         SetProcessDPIAware();
         let dc=GetDC(null_mut()); let dpi=if dc.is_null(){96}else{let result=GetDeviceCaps(dc,LOGPIXELSX as i32).max(96);ReleaseDC(null_mut(),dc);result};
+        let area = work_area(null_mut());
+        let logical_height = if can_install { 300 } else { 260 };
+        let dpi = fitting_dpi(dpi, 652, logical_height, area);
         let px = |value: i32| value*dpi/96;
         let dark = dark_theme();
         let background = CreateSolidBrush(if dark {0x141712} else {0xf8f9f7});
@@ -330,10 +367,10 @@ pub fn show(selected: Option<PathBuf>, text: &str, can_install: bool) {
         class.lpszClassName = name.as_ptr();
         if RegisterClassW(&class)==0 {DeleteObject(background);return;}
         let mut state=Box::new(State{selected:RefCell::new(selected),status:Cell::new(null_mut()),install:Cell::new(null_mut()),download_button:Cell::new(null_mut()),download:RefCell::new(None),temporary:RefCell::new(None),installing:RefCell::new(None),dark,background});
-        let (width,height)=(px(652),px(if can_install {300} else {260}));
+        let (width,height)=(px(652),px(logical_height));
         let window=CreateWindowExW(0,name.as_ptr(),wide("Подготовка к запуску").as_ptr(),
-            WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX|WS_THICKFRAME,
-            ((GetSystemMetrics(SM_CXSCREEN)-width)/2).max(0),((GetSystemMetrics(SM_CYSCREEN)-height)/2).max(0),
+            WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,
+            area.left + (area.right - area.left - width) / 2, area.top + (area.bottom - area.top - height) / 2,
             width,height,null_mut(),null_mut(),instance,(&mut *state as *mut State).cast());
         if window.is_null() {DeleteObject(background);return;}
         title_theme(window,dark);

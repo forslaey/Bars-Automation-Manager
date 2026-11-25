@@ -56,7 +56,22 @@ namespace ServiceTool
     Check(hub.Text=="Менеджер автоматизации Барс","Launcher title matches the new product name");
     hub.Show();Application.DoEvents();var all=Children(hub).ToArray();Check(!all.OfType<Label>().Any(l=>l.Text.StartsWith("Версия ")),"No launcher version label");
     var bundle=all.OfType<BrandButton>().Single(b=>b.Text=="Скачать комплект");var guide=all.OfType<BrandButton>().Single(b=>b.Text=="Инструкция");var about=all.OfType<BrandButton>().Single(b=>b.AccessibleName=="О программе");var exit=all.OfType<BrandButton>().Single(b=>b.Text=="Закрыть программу");Check(about.Width==about.Height&&about.Height==exit.Height,"Square About button");Check(about.Left<guide.Left&&guide.Left<bundle.Left&&bundle.Left<exit.Left,"Launcher footer order");Check(Math.Abs(bundle.Width-guide.Width)<=1&&Math.Abs(guide.Width-exit.Width)<=1,"Equal text button widths");Check(hub.FormBorderStyle==FormBorderStyle.FixedSingle&&!hub.MaximizeBox,"Launcher fixed border and maximize");
-    bundle.PerformClick();Check(hub.RequestedModuleType==typeof(BundleDownloadForm)&&!hub.Visible,"Launcher closes for downloader");
+    string fixture=Path.Combine(Path.GetTempPath(),"bars-downloader-navigation-"+Guid.NewGuid().ToString("N"));
+    try {
+     string libraries=Directory.CreateDirectory(Path.Combine(fixture,"_libraries")).FullName;
+     Directory.CreateDirectory(Path.Combine(fixture,"_tools"));
+     File.WriteAllText(Path.Combine(libraries,"fixture.msi"),"navigation fixture");
+     BundlePreferences.UseDiscoveredRoot(BundleSection.Any,fixture);
+     bundle.PerformClick();
+     var wait=System.Diagnostics.Stopwatch.StartNew();
+     while(hub.Visible&&wait.ElapsedMilliseconds<5000){Application.DoEvents();System.Threading.Thread.Sleep(10);}
+     Check(hub.RequestedModuleType==typeof(BundleDownloadForm)&&!hub.Visible,"Launcher opens downloader after background bundle lookup");
+     using(var downloader=hub.RequestedModule())
+      Check(Children(downloader).OfType<BrandTextBox>().Any(field=>field.Text==fixture),"Downloader receives the matched bundle root");
+    }finally{
+     BundlePreferences.UseDiscoveredRoot(BundleSection.Any,null);
+     if(Directory.Exists(fixture))Directory.Delete(fixture,true);
+    }
    }
    using(var software=new SoftwareManagerForm(true)){Check(software.FormBorderStyle==FormBorderStyle.FixedSingle&&software.MaximizeBox,"Software fixed border and maximize");Check(!Children(software).OfType<Label>().Any(l=>l.Cursor==Cursors.Hand&&l.Text.Contains("комплект")),"No clickable software status");}
    using(var tools=new ToolsDeploymentForm(true)){Check(tools.FormBorderStyle==FormBorderStyle.Sizable&&tools.MaximizeBox,"Tools window is resizable");}

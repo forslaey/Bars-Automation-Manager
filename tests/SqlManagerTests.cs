@@ -193,7 +193,8 @@ namespace ServiceTool
                         Application.DoEvents();
                         System.Threading.Thread.Sleep(10);
                     }
-                    Check(cancelledWorkspace&&deployButton.Enabled&&destinationField.Enabled,"Cancellation restores actions without discarding selected tools: cancelled="+cancelledWorkspace+", deploy="+deployButton.Enabled+", destination="+destinationField.Enabled+", selected="+workspaceGrid.Deployment.Length);
+                    Check(cancelledWorkspace&&deployButton.Enabled&&destinationField.Enabled&&
+                        workspaceGrid.Deployment.SequenceEqual(new[]{"R-Tool's"})&&workspaceGrid.Variants["R-Tool's"].SetEquals(new[]{"version/R-Tool.exe"}),"Cancellation restores actions without discarding selected tools: cancelled="+cancelledWorkspace+", deploy="+deployButton.Enabled+", destination="+destinationField.Enabled+", selected="+workspaceGrid.Deployment.Length);
                     foreach(bool dark in new[]{true,false})
                     using(var bitmap=new Bitmap(workspace.Width,workspace.Height))
                     {

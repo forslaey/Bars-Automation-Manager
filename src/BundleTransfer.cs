@@ -18,16 +18,47 @@ namespace ServiceTool
         // Parts are owned by this manager and tied to the remote content hash.
         internal static string PartPath(string root,BundleRemoteFile file)
         {
-            return YandexBundleSource.LocalPath(root,"/.bars-download/"+(file.Sha256??file.TransferId)+"/"+file.Path.TrimStart('/')+".part");
+            string identity = file.Sha256 ?? file.TransferId;
+            string relative = LegacyPartName(file);
+            if (Path.GetFullPath(root).Length + relative.Length <= 230)
+                return YandexBundleSource.LocalPath(root, relative);
+            BundleFolders.PackageDestination(root, file.Path);
+            using (var hash = System.Security.Cryptography.SHA256.Create())
+            {
+                byte[] key = System.Text.Encoding.UTF8.GetBytes(identity + "\n" + file.Path);
+                string compact = BitConverter.ToString(hash.ComputeHash(key), 0, 12).Replace("-", "").ToLowerInvariant();
+                return YandexBundleSource.LocalPath(root, "/.bars-download/" + compact + ".part");
+            }
         }
+        private static string LegacyPartName(BundleRemoteFile file)
+        {
+            return "/.bars-download/" + (file.Sha256 ?? file.TransferId) + "/" + file.Path.TrimStart('/') + ".part";
+        }
+
+        private static void MigratePartial(string root, BundleRemoteFile file, string destination)
+        {
+            string relative = LegacyPartName(file);
+            int length = Path.GetFullPath(root).Length + relative.Length;
+            if (length <= 230 || length >= 260 || File.Exists(destination)) return;
+            string previous = YandexBundleSource.LocalPath(root, relative);
+            if (File.Exists(previous)) File.Move(previous, destination);
+        }
+
+        private static void Quarantine(string root, string part)
+        {
+            string name = Guid.NewGuid().ToString("N").Substring(0, 16) + ".bad";
+            string target = YandexBundleSource.LocalPath(root, "/.bars-download/" + name);
+            File.Move(part, target);
+        }
+
         internal void Download(BundleRemoteFile file,string root,string originalHash,Action<long> progress,CancellationToken token)
         { Download(file,root,originalHash,progress,token,null,null); }
-        internal void Download(BundleRemoteFile file,string root,string originalHash,Action<long> progress,CancellationToken token,Action<long> received,Action<string> stage)
+        internal void Download(BundleRemoteFile file,string root,string originalHash,Action<long> progress,CancellationToken token,Action<long> received,Action<string> stage,Action<string> verify = null,BundleMaintenance.IdentityCache identities = null)
         {
             for(int attempt=0;;attempt++)
             {
                 token.ThrowIfCancellationRequested();
-                try { DownloadOnce(file,root,originalHash,progress,token,received,stage);return; }
+                try { DownloadOnce(file,root,originalHash,progress,token,received,stage,verify,identities);return; }
                 catch(BundleTransientException)
                 {
                     if(attempt>=3)throw;
@@ -59,18 +90,19 @@ namespace ServiceTool
                 if(token.WaitHandle.WaitOne(Math.Min(1000,remaining)))token.ThrowIfCancellationRequested();
             }
         }
-        void DownloadOnce(BundleRemoteFile file,string root,string originalHash,Action<long> progress,CancellationToken token,Action<long> received,Action<string> stage)
+        void DownloadOnce(BundleRemoteFile file,string root,string originalHash,Action<long> progress,CancellationToken token,Action<long> received,Action<string> stage,Action<string> verify = null,BundleMaintenance.IdentityCache identities = null)
         {
             string destination=BundleFolders.PackageDestination(root,file.Path),part=PartPath(root,file);
             Directory.CreateDirectory(Path.GetDirectoryName(part));
+            lock (BundlePublication.Gate) MigratePartial(root, file, part);
             if(file.Size==0&&!File.Exists(part))using(var empty=File.Create(part)){}
             if(File.Exists(part)&&(File.GetAttributes(part)&FileAttributes.ReparsePoint)!=0)throw new IOException("Временный файл является ссылкой");
             long offset=File.Exists(part)?new FileInfo(part).Length:0;
-            if(offset>file.Size){File.Move(part,part+".invalid-"+Guid.NewGuid().ToString("N"));offset=0;}
+            if(offset>file.Size){Quarantine(root,part);offset=0;}
             if(offset==file.Size&&File.Exists(part)&&file.Sha256!=null&&!String.Equals(YandexBundleSource.Hash(part,token),file.Sha256,StringComparison.OrdinalIgnoreCase))
             {
                 // Quarantine only this manager's failed part; preserve it for diagnosis.
-                File.Move(part,part+".invalid-"+Guid.NewGuid().ToString("N"));offset=0;
+                Quarantine(root,part);offset=0;
             }
             progress(offset==file.Size&&file.Size>0?file.Size-1:offset);
             if(offset<file.Size)
@@ -117,7 +149,7 @@ namespace ServiceTool
             if(stage!=null)stage(file.Sha256==null?"Проверка архива":"Проверка SHA-256");
             if(file.Sha256!=null&&!String.Equals(YandexBundleSource.Hash(part,token),file.Sha256,StringComparison.OrdinalIgnoreCase))
             {
-                File.Move(part,part+".invalid-"+Guid.NewGuid().ToString("N"));
+                Quarantine(root,part);
                 if(file.Group=="Утилиты"&&ToolArchives.Supports(file.Path))throw new BundleArchiveException("SHA-256 архива не совпадает.");
                 throw new BundleTransientException("SHA-256 не совпадает; повреждённая копия сохранена в карантине",null);
             }
@@ -136,14 +168,16 @@ namespace ServiceTool
                 }
             }
 
+            if (verify != null) verify(part);
+
             // Recheck the destination immediately before publishing; never replace
             // a locally edited file or an unexpected newly created file.
             destination=BundleFolders.PackageDestination(root,file.Path);
             Directory.CreateDirectory(Path.GetDirectoryName(destination));
             lock(BundlePublication.Gate)
             {
-                BundleMaintenance.ValidateAgainstLocal(root,part,file,token);
-                if(originalHash!=null&&!(file.Group=="Утилиты"&&ToolArchives.Supports(file.Path)))BundlePackageIdentity.ValidateUpgrade(destination,part,file.Path);
+                BundleMaintenance.ValidateAgainstLocal(root,part,file,token,identities);
+                if(originalHash!=null&&!BundleRemoteFile.IsBarsPackage(file.Path)&&!(file.Group=="Утилиты"&&ToolArchives.Supports(file.Path)))BundlePackageIdentity.ValidateUpgrade(destination,part,file.Path);
                 if(stage!=null)stage("Публикация");
                 BundlePublication.Publish(part,destination,originalHash,token,null);
             }

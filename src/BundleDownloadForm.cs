@@ -37,7 +37,7 @@ namespace ServiceTool
         protected Dictionary<string,HashSet<string>> ToolVariants {get{return toolGrid.Variants;}}
         protected DownloadProgressView ToolProgress {get{return total;}}
         private string localTools;
-        private bool extracting;
+        private bool extracting, toolOperationCancelled;
         private BundleCloud verifiedCloud;
         private string ToolsFolder {get{return localTools??Path.Combine(folder.Text,"_tools");}}
         internal static string ToolPackage(BundleRemoteFile file)
@@ -164,14 +164,14 @@ namespace ServiceTool
             var actions=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=12,RowCount=2,Margin=Padding.Empty};for(int i=0;i<12;i++)actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100F/12));actions.RowStyles.Add(new RowStyle(SizeType.Percent,50));actions.RowStyles.Add(new RowStyle(SizeType.Percent,50));
             scan=Button(toolsOnly?"Проверить в сети":"Проверить",false);start=Button("Скачать",true);pause=Button("Пауза",false);stop=Button("Отменить",false);back=Button("В меню",false);results=Button(toolsOnly?"Перепроверить файлы":"Результаты",false);results.Click+=async delegate{if(toolsOnly)await RecheckTools();else await ShowResults();};
             scan.Click+=async delegate{await Scan();};start.Click+=async delegate{await Download();};pause.Click+=delegate{if(!downloading||preparingDownload)return;if(paused){paused=false;pause.Text="Пауза";}else{paused=true;pause.Enabled=false;pause.Text="Пауза…";if(cancellation!=null)cancellation.Cancel();}};
-            stop.Click+=delegate{if(toolsOnly&&busy&&!downloading&&!extracting){if(cancellation!=null)cancellation.Cancel();return;}if(extracting){if(cancelToolDeployment!=null)cancelToolDeployment();return;}if(busy&&BrandMessageBox.ConfirmStop(this,"Остановить загрузку? Готовые файлы сохранятся. Недокачанные файлы будут удалены.")==DialogResult.Yes){cancelRequested=true;paused=false;if(cancellation!=null)cancellation.Cancel();}};
+            stop.Click+=delegate{if(toolsOnly&&busy&&!downloading&&!extracting){if(cancellation!=null)cancellation.Cancel();return;}if(extracting){CancelToolOperation();return;}if(busy&&BrandMessageBox.ConfirmStop(this,"Остановить загрузку? Готовые файлы сохранятся. Недокачанные файлы будут удалены.")==DialogResult.Yes){cancelRequested=true;paused=false;if(cancellation!=null)cancellation.Cancel();}};
             back.Click+=delegate{if(ModuleNavigation.ReturnToHub())return;MenuRequested=true;Close();};var close=Button("Закрыть",false);close.Click+=delegate{Close();};var upper = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty };
             var lower = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty };
             if(toolsOnly)
             {
                 deployTools=Button("Распаковать",false);
                 deployTools.Click+=async delegate{await DeployTools();};
-                removeTools=Button("Удалить",false);removeTools.Click+=async delegate{await RunToolOperation(RemoveTools);};
+                removeTools=Button("Удалить",false);removeTools.Click+=async delegate{await RunToolOperation(RemoveTools, refreshOnCancellation: true);};
                 ModuleNavigation.StandardFooter(upper,scan,start,results,deployTools);
             }
             else ModuleNavigation.StandardFooter(upper, scan, start, results);
@@ -182,7 +182,7 @@ namespace ServiceTool
             var content=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=1,RowCount=2,Margin=Padding.Empty};content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));content.RowStyles.Add(new RowStyle(SizeType.Percent,100));content.RowStyles.Add(new RowStyle(SizeType.Absolute,100));content.Controls.Add(new FillContentPanel(body){Margin=Padding.Empty,PreserveScrollOnFocus=true},0,0);content.Controls.Add(actions,0,1);Root.Controls.Add(content,0,1);
             timer.Tick+=delegate{RefreshProgress();};VisibleChanged+=delegate{timer.Enabled=Visible;};
             FormClosed+=delegate{if(toolRead!=null)toolRead.Cancel();};
-            FormClosing+=delegate(object sender,FormClosingEventArgs e){if(busy){e.Cancel=true;if(extracting){closeAfter=true;if(cancelToolDeployment!=null)cancelToolDeployment();return;}if(!downloading || closeAfter || ModuleNavigation.ExitConfirmed || BrandMessageBox.Show(this,"Остановить загрузку и закрыть окно? Готовые файлы сохранятся.","Скачать комплект",MessageBoxButtons.YesNo,MessageBoxIcon.Warning,MessageBoxDefaultButton.Button2)==DialogResult.Yes){closeAfter=true;cancelRequested=true;paused=false;if(cancellation!=null)cancellation.Cancel();}}};
+            FormClosing+=delegate(object sender,FormClosingEventArgs e){if(busy){e.Cancel=true;if(extracting){closeAfter=true;CancelToolOperation();return;}if(!downloading || closeAfter || ModuleNavigation.ExitConfirmed || BrandMessageBox.Show(this,"Остановить загрузку и закрыть окно? Готовые файлы сохранятся.","Скачать комплект",MessageBoxButtons.YesNo,MessageBoxIcon.Warning,MessageBoxDefaultButton.Button2)==DialogResult.Yes){closeAfter=true;cancelRequested=true;paused=false;if(cancellation!=null)cancellation.Cancel();}}};
             if(programs||sqlOnly||toolsOnly){software.Checked=programs;sql.Checked=sqlOnly;}SetTheme(Colors.Dark,false);Shown+=async delegate{await RefreshTools();};UpdateState();
         }
         private async Task ChooseSource()
@@ -292,13 +292,23 @@ namespace ServiceTool
             }
             await RunToolOperation(()=>deployFromWorkspace(ToolsFolder,toolGrid.Deployment,toolGrid.Shortcuts,total));
         }
-        private async Task RunToolOperation(Func<Task> action)
+        private void CancelToolOperation()
         {
-            if(busy||toolRead!=null||action==null)return;
-            busy=extracting=true;UpdateState();
-            try{await action();}catch(Exception ex){total.FinishOperation("Не выполнено: "+ex.Message,failed:true);}
-            finally{busy=extracting=false;UpdateState();if(closeAfter)Close();}
-            if(!IsDisposed)await RefreshTools();
+            toolOperationCancelled = true;
+            if (cancelToolDeployment != null) cancelToolDeployment();
+        }
+
+        private async Task RunToolOperation(Func<Task> action, bool refreshOnCancellation = false)
+        {
+            if (busy || toolRead != null || action == null) return;
+            toolOperationCancelled = false;
+            busy = extracting = true;
+            UpdateState();
+            try { await action(); }
+            catch (OperationCanceledException) { toolOperationCancelled = true; }
+            catch (Exception ex) { total.FinishOperation("Не выполнено: " + ex.Message, failed: true); }
+            finally { busy = extracting = false; UpdateState(); if (closeAfter) Close(); }
+            if (!IsDisposed && (!toolOperationCancelled || refreshOnCancellation)) await RefreshTools();
         }
         private async Task RecheckTools()
         {
@@ -523,6 +533,7 @@ namespace ServiceTool
                 long required=selected.Sum(e=>Math.Max(0,e.File.Size-(File.Exists(BundleTransfer.PartPath(scannedRoot,e.File))?new FileInfo(BundleTransfer.PartPath(scannedRoot,e.File)).Length:0)));
                 if(drive.IsReady&&drive.AvailableFreeSpace<required+16L*1024*1024)throw new IOException("Недостаточно свободного места для выбранных файлов и безопасной загрузки.");
                 preparingDownload=false;UpdateState();
+                var identities = new BundleMaintenance.IdentityCache();
                 do
                 {
                     if(cancellation!=null)cancellation.Dispose();cancellation=new CancellationTokenSource();var token=cancellation.Token;
@@ -533,7 +544,7 @@ namespace ServiceTool
                             try{
                                 bool published=BundlePublication.Matches(scannedRoot,entry.File,token);
                                 if(!published&&!cloudSource.Contains(fileCloud,entry.File))throw new IOException("Выбранное облако не содержит подтверждённую копию файла");
-                                if(!published)cloudSource.Transfer(fileCloud).Download(entry.File,scannedRoot,entry.OriginalHash,bytes=>{lock(sync)entry.Bytes=bytes;},token,bytes=>Interlocked.Add(ref receivedBytes,bytes),state=>{lock(sync){entry.State=state;if(state=="Ожидание повтора")workerLimit=Math.Max(1,workerLimit-1);}BundleSession.Log(scannedRoot,entry.File.Path+": "+state);});
+                                if(!published)cloudSource.Transfer(fileCloud).Download(entry.File,scannedRoot,entry.OriginalHash,bytes=>{lock(sync)entry.Bytes=bytes;},token,bytes=>Interlocked.Add(ref receivedBytes,bytes),state=>{lock(sync){entry.State=state;if(state=="Ожидание повтора")workerLimit=Math.Max(1,workerLimit-1);}BundleSession.Log(scannedRoot,entry.File.Path+": "+state);}, identities: identities);
                                 string warning=entry.File.Sha256==null?null:BundlePublication.Record(scannedRoot,entry.File,null);
                                 lock(sync){entry.Done=true;entry.Bytes=entry.File.Size;entry.Selected=false;entry.State=warning==null?"Готово":warning;}Log("Сохранён файл: "+entry.File.Path.TrimStart('/')+(warning==null?"":". "+warning));
                             }

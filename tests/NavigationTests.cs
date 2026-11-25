@@ -183,8 +183,15 @@ namespace ServiceTool
         [STAThread]
         public static int Main()
         {
+            // DoEvents can detach WinForms' automatic context between separate windows.
+            // Keep async button handlers on the fixture's STA for the entire run.
+            var previousContext = System.Threading.SynchronizationContext.Current;
+            bool autoInstall = WindowsFormsSynchronizationContext.AutoInstall;
+            WindowsFormsSynchronizationContext.AutoInstall = false;
+            using (var callbacks = new WindowsFormsSynchronizationContext())
             try
             {
+                System.Threading.SynchronizationContext.SetSynchronizationContext(callbacks);
                 var hub = new ManagerHub();
                 using (var context = new ManagerApplicationContext(() => hub, () => hub, (owner, message) => { throw new InvalidOperationException("Idle exit asked for confirmation."); }))
                 {
@@ -216,6 +223,11 @@ namespace ServiceTool
                 return 0;
             }
             catch (Exception ex) { Console.Error.WriteLine(ex); return 1; }
+            finally
+            {
+                System.Threading.SynchronizationContext.SetSynchronizationContext(previousContext);
+                WindowsFormsSynchronizationContext.AutoInstall = autoInstall;
+            }
         }
     }
 }

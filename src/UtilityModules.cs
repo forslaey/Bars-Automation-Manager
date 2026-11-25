@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -251,7 +251,7 @@ namespace ServiceTool
         private LibrarySession Session;
         private System.Threading.CancellationTokenSource archiveCancellation;
         internal ToolsDeploymentForm(bool previewMode)
-            : base(BundleFolders.DefaultRoot,toolsOnly:true,localSource:previewMode?null:ToolsDeployment.FindSource())
+            : base(previewMode?BundleFolders.DefaultRoot:BundlePreferences.Load(BundleSection.Tools),toolsOnly:true,localSource:previewMode?null:ToolsDeployment.FindSource())
         {
             preview=previewMode;
             deployFromWorkspace=Deploy;

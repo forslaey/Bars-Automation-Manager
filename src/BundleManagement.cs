@@ -12,7 +12,7 @@ namespace ServiceTool
         internal string Key, Version;
         internal static BundlePackageIdentity Read(string path,string relative)
         {
-            if(relative.StartsWith("/_tools/",StringComparison.OrdinalIgnoreCase))return null;
+            if(relative.StartsWith("/_tools/",StringComparison.OrdinalIgnoreCase)||BundleRemoteFile.IsBarsPackage(relative))return null;
             if (relative.StartsWith("/_libraries/", StringComparison.OrdinalIgnoreCase) && VcArchivePackage.Matches(relative))
             {
                 var archive = VcArchivePackage.Describe(relative);
@@ -22,11 +22,17 @@ namespace ServiceTool
             string ext=Path.GetExtension(relative);
             if(!ext.Equals(".exe",StringComparison.OrdinalIgnoreCase)&&!ext.Equals(".msi",StringComparison.OrdinalIgnoreCase))return null;
             // Staging names end in .part: MSI metadata still needs its real extension.
-            string metadata=path,alias=null;
+            string metadata=path, alias=null, copy=null;
             try
             {
                 if(!Path.GetFileName(path).Equals(Path.GetFileName(relative),StringComparison.OrdinalIgnoreCase))
-                {alias=Path.Combine(Path.GetDirectoryName(path),"identity-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(alias);metadata=Path.Combine(alias,Path.GetFileName(relative));File.Copy(path,metadata,false);}
+                {
+                    alias = Path.Combine(Path.GetTempPath(), "bmi-" + Guid.NewGuid().ToString("N").Substring(0, 12));
+                    Directory.CreateDirectory(alias);
+                    copy = Path.Combine(alias, Path.GetFileName(relative));
+                    File.Copy(path, copy, false);
+                    metadata = copy;
+                }
                 string id=SoftwareCatalog.PackageId(relative);
                 if(!String.IsNullOrEmpty(id))
                 {
@@ -42,7 +48,17 @@ namespace ServiceTool
                 return new BundlePackageIdentity {Key="library|"+library.Id+"|"+library.Architecture,Version=library.Version};
             }
             catch(Exception ex){if(ex is IOException||ex is ArgumentException||ex is System.Runtime.InteropServices.COMException||ex is UnauthorizedAccessException)return null;throw;}
-            finally{if(alias!=null){if(File.Exists(metadata))File.Delete(metadata);if(Directory.Exists(alias))Directory.Delete(alias,false);}}
+            finally
+            {
+                if (alias != null)
+                    try
+                    {
+                        if (copy != null) File.Delete(copy);
+                        if (Directory.Exists(alias)) Directory.Delete(alias);
+                    }
+                    catch (IOException) { }
+                    catch (UnauthorizedAccessException) { }
+            }
         }
         internal static void ValidateUpgrade(string oldFile,string newFile,string relative)
         {
@@ -54,7 +70,10 @@ namespace ServiceTool
     internal static class BundlePreferences
     {
         static string FileName {get{return ApplicationStorage.FilePath("bundle-root.txt");}}
-        internal static string Load()
+        private static readonly System.Collections.Generic.Dictionary<BundleSection,string> discovered =
+            new System.Collections.Generic.Dictionary<BundleSection,string>();
+
+        internal static string RememberedRoot()
         {
             try
             {
@@ -66,17 +85,45 @@ namespace ServiceTool
                         string trimmed=value.TrimEnd(Path.DirectorySeparatorChar,Path.AltDirectorySeparatorChar);
                         string root=BundleFolders.BundleRoot(trimmed.Length>Path.GetPathRoot(value).Length?trimmed:value);
                         if(!String.Equals(Path.GetFileName(root.TrimEnd(Path.DirectorySeparatorChar,Path.AltDirectorySeparatorChar)),
-                            "Библиотеки",StringComparison.OrdinalIgnoreCase))return root;
+                            "Библиотеки", StringComparison.OrdinalIgnoreCase)) return root;
                     }
                 }
             }
             catch(IOException){}
             catch(UnauthorizedAccessException){}
-            return BundleFolders.DefaultRoot;
+            catch(ArgumentException){}
+            return null;
         }
+
+        internal static string DiscoveredRoot(BundleSection section)
+        {
+            string value;
+            lock (discovered) return discovered.TryGetValue(section, out value) && Directory.Exists(value) ? value : null;
+        }
+
+        internal static void UseDiscoveredRoot(BundleSection section, string root)
+        {
+            lock (discovered)
+            {
+                if (root == null) discovered.Remove(section);
+                else discovered[section] = root;
+            }
+        }
+
+        internal static string Load() { return Load(BundleSection.Any); }
+        internal static string Load(BundleSection section)
+        {
+            return DiscoveredRoot(section) ?? RememberedRoot() ?? BundleFolders.DefaultRoot;
+        }
+
         internal static void Save(string root)
-        {Directory.CreateDirectory(ApplicationStorage.DirectoryPath);File.WriteAllText(Path.Combine(ApplicationStorage.DirectoryPath,"bundle-root.txt"),Path.GetFullPath(root));}
+        {
+            Directory.CreateDirectory(ApplicationStorage.DirectoryPath);
+            File.WriteAllText(FileName,Path.GetFullPath(root));
+            lock (discovered) discovered.Clear();
+        }
     }
+
     internal sealed class BundleOldFile
     {internal string Path,Hash;}
     internal static class BundleMaintenance
@@ -103,7 +150,36 @@ namespace ServiceTool
                 }
             }
         }
-        internal static void ValidateAgainstLocal(string root,string staged,BundleRemoteFile file,CancellationToken token)
+        internal sealed class IdentityCache
+        {
+            private sealed class Entry
+            {
+                internal long Length;
+                internal DateTime Written, Created;
+                internal BundlePackageIdentity Identity;
+            }
+
+            private readonly System.Collections.Generic.Dictionary<string, Entry> entries =
+                new System.Collections.Generic.Dictionary<string, Entry>(StringComparer.OrdinalIgnoreCase);
+
+            // The publication gate owns this instance while local candidates are checked.
+            internal BundlePackageIdentity Read(string path, string relative)
+            {
+                var file = new FileInfo(path);
+                long length = file.Length;
+                var written = file.LastWriteTimeUtc;
+                var created = file.CreationTimeUtc;
+                Entry entry;
+                if (entries.TryGetValue(path, out entry) && entry.Length == length &&
+                    entry.Written == written && entry.Created == created) return entry.Identity;
+                var identity = BundlePackageIdentity.Read(path, relative);
+                if (identity == null) entries.Remove(path);
+                else entries[path] = new Entry { Length = length, Written = written, Created = created, Identity = identity };
+                return identity;
+            }
+        }
+
+        internal static void ValidateAgainstLocal(string root,string staged,BundleRemoteFile file,CancellationToken token, IdentityCache identities=null)
         {
             if(file.Group=="Утилиты")return;
             var incoming=BundlePackageIdentity.Read(staged,file.Path);if(incoming==null)return;
@@ -111,7 +187,7 @@ namespace ServiceTool
             {
                 token.ThrowIfCancellationRequested();if((File.GetAttributes(local)&FileAttributes.ReparsePoint)!=0)continue;
                 string relative="/"+local.Substring(Path.GetFullPath(root).TrimEnd('\\','/').Length).TrimStart('\\','/').Replace('\\','/');
-                var existing=BundlePackageIdentity.Read(local,relative);
+                var existing=identities == null ? BundlePackageIdentity.Read(local,relative) : identities.Read(local,relative);
                 if(existing!=null&&existing.Key==incoming.Key&&LibraryVersions.SameChannel(existing.Version,incoming.Version)&&LibraryVersions.Compare(existing.Version,incoming.Version)>0)
                     throw new IOException("В комплекте уже есть более новая версия продукта; понижение заблокировано: "+relative);
             }
@@ -154,6 +230,9 @@ namespace ServiceTool
             string stage=YandexBundleSource.LocalPath(root,"/.bars-download/placeholder");stage=Path.GetDirectoryName(stage);
             if(!Directory.Exists(stage))return new string[0];
             var result=new System.Collections.Generic.List<string>();
+            var ownedName = new System.Text.RegularExpressions.Regex(@"^(?:[0-9a-f]{24}\.part|[0-9a-f]{16}\.bad)$");
+            result.AddRange(Directory.GetFiles(stage).Where(file => ownedName.IsMatch(Path.GetFileName(file)) &&
+                (File.GetAttributes(file) & FileAttributes.ReparsePoint) == 0));
             foreach(string dir in Directory.GetDirectories(stage))
             {
                 string name=Path.GetFileName(dir);

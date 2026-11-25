@@ -25,19 +25,19 @@ namespace ServiceTool
         protected override void OnTextChanged(EventArgs e){base.OnTextChanged(e);Notify();}
         protected override void OnSizeChanged(EventArgs e){base.OnSizeChanged(e);Notify();}
         protected override void OnVScroll(EventArgs e){base.OnVScroll(e);Notify();}
+        internal void ScrollWheel(int delta)
+        {
+            wheelRemainder += delta;
+            int lines = wheelRemainder / 40;
+            wheelRemainder -= lines * 40;
+            if (lines != 0) ScrollTo(ScrollPosition - lines * Font.Height);
+        }
+
         protected override void WndProc(ref Message m)
         {
             if (m.Msg == 0x20A)
             {
-                wheelRemainder += (short)((m.WParam.ToInt64() >> 16) & 0xffff);
-                int lines = wheelRemainder * 3 / 120;
-                wheelRemainder -= lines * 120 / 3;
-                if (lines != 0)
-                {
-                    // RichEdit can scroll by lines without estimating the position of off-screen text.
-                    SendMessage(Handle, 0xB6, IntPtr.Zero, new IntPtr(-lines));
-                    Notify();
-                }
+                ScrollWheel((short)((m.WParam.ToInt64() >> 16) & 0xffff));
                 m.Result = IntPtr.Zero;
                 return;
             }
@@ -59,7 +59,7 @@ namespace ServiceTool
         protected override void OnMouseMove(MouseEventArgs e){base.OnMouseMove(e);if(!dragging||reader==null)return;int travel=Math.Max(1,Height-12-ThumbBounds.Height);reader.ScrollTo((int)((double)(e.Y-offset-6)*reader.MaximumScroll/travel));}
         protected override void OnMouseUp(MouseEventArgs e){base.OnMouseUp(e);dragging=false;Capture=false;Invalidate();}
         protected override void OnMouseCaptureChanged(EventArgs e){base.OnMouseCaptureChanged(e);if(!Capture){dragging=false;Invalidate();}}
-        protected override void OnMouseWheel(MouseEventArgs e){base.OnMouseWheel(e);if(reader!=null)reader.ScrollTo(reader.ScrollPosition-(int)Math.Round(e.Delta/120.0*reader.Font.Height*3));}
+        protected override void OnMouseWheel(MouseEventArgs e){base.OnMouseWheel(e);if(reader!=null)reader.ScrollWheel(e.Delta);}
     }
     internal sealed class GuideSectionScrollBar : Control
     {

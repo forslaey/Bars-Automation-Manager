@@ -75,15 +75,18 @@ namespace ServiceTool
             return true;
         }
 
+        internal bool ActivateExisting(Type type)
+        {
+            if (shuttingDown || exitRequested) return true;
+            Form existing;
+            if (!modules.TryGetValue(type, out existing) || existing.IsDisposed) return false;
+            ActivateWindow(existing);
+            return true;
+        }
+
         internal void OpenModule(Type type, Func<Form> factory)
         {
-            if (shuttingDown || exitRequested) return;
-            Form existing;
-            if (modules.TryGetValue(type, out existing) && !existing.IsDisposed)
-            {
-                ActivateWindow(existing);
-                return;
-            }
+            if (ActivateExisting(type)) return;
 
             try { ShowWindow(CreateWindow(factory)); }
             catch (Exception ex)

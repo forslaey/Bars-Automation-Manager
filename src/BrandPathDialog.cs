@@ -315,11 +315,22 @@ namespace ServiceTool
             return path;
         }
 
+        internal static string DestinationText(string parent)
+        {
+            string root = Path.GetPathRoot(parent);
+            if (String.IsNullOrEmpty(root) || root.Length < 2 || root[1] != ':')
+                return "Папка будет создана по пути " + parent + ".";
+            string drive = root.Substring(0, 2);
+            return String.Equals(root.TrimEnd('\\'), parent.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)
+                ? "Папка будет создана на диске " + root
+                : "Папка будет создана на диске " + drive + " в папке " + parent + ".";
+        }
+
         internal NewFolderNameDialog(ThemePalette colors, Icon icon, string parent)
         {
             Text = "Новая папка";
             Icon = icon;
-            ClientSize = new Size(470, 200);
+            ClientSize = new Size(470, 168);
             AutoScaleDimensions = new SizeF(96, 96);
             AutoScaleMode = AutoScaleMode.Dpi;
             Font = new Font("Segoe UI", 10);
@@ -330,18 +341,25 @@ namespace ServiceTool
             BackColor = colors.Canvas;
             ForeColor = colors.Text;
             NativeWindowTheme.Bind(this, () => colors.Dark);
-            var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, Padding = new Padding(22, 16, 22, 16) };
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 25));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+            var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, Padding = new Padding(22, 12, 22, 14) };
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
             var name = new BrandTextBox { Dock = DockStyle.Fill, Palette = colors, BackColor = colors.SurfaceAlt,
-                ForeColor = colors.Text, AccessibleName = "Имя новой папки", MaxLength = 255 };
-            var status = new Label { Text = parent, ForeColor = colors.Muted, Dock = DockStyle.Fill, AutoEllipsis = true,
+                ForeColor = colors.Text, AccessibleName = "Имя новой папки", MaxLength = 255, Margin = Padding.Empty };
+            var caption = new InputCaptionLabel { Text = "Имя новой папки", Dock = DockStyle.Fill,
+                Margin = Padding.Empty, TextAlign = ContentAlignment.TopLeft };
+            var status = new FlushLabel { Text = DestinationText(parent), ForeColor = colors.Muted,
+                Dock = DockStyle.Fill, Margin = Padding.Empty, SingleLine = true, AutoEllipsis = true,
                 TextAlign = ContentAlignment.MiddleLeft };
-            layout.Controls.Add(new Label { Text = "Имя новой папки", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 0);
+            layout.Controls.Add(caption, 0, 0);
             layout.Controls.Add(new PathFieldFrame(name), 0, 1);
             layout.Controls.Add(status, 0, 2);
+            status.AccessibleDescription = status.Text;
+            var destinationTip = new ToolTip { ShowAlways = true };
+            destinationTip.SetToolTip(status, status.Text);
+            Disposed += delegate { destinationTip.Dispose(); };
             var footer = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty };
             var cancel = new BrandButton { Text = "Отмена", Palette = colors, DialogResult = DialogResult.Cancel };
             var create = new BrandButton { Text = "Создать", Primary = true, Palette = colors, Enabled = false };

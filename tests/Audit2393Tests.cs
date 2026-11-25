@@ -75,10 +75,22 @@ namespace ServiceTool
                         form.SetTheme(dark, false);
                         form.Show();
                         var table = Find(form).OfType<ServiceGrid>().Single();
-                        Wait(() => table.Rows.Count == 2, "services");
+                        Wait(() => table.Rows.Count > 0, "services");
+                        ClickPackageGroup(table, table.Rows[0]);
+                        Check(table.Rows.Cast<DataGridViewRow>().Count(row => row.Cells[4].Value != null) == 2, "Service rows appear on expansion");
                         var rows = table.Rows.Cast<DataGridViewRow>().ToDictionary(row => (string)row.Cells[1].Value);
                         Check((string)rows["BrokenService.zip"].Cells[4].Value == "Архив повреждён", "Corrupt archive marked ready.");
                         Check((string)rows["WorkingService.zip"].Cells[4].Value == "Готов к работе", "Valid archive did not pass.");
+                        form.MinimumSize = Size.Empty;
+                        form.ClientSize = new Size(768, 650);
+                        var viewport = Find(form).OfType<FillContentPanel>().Single();
+                        Wait(() => viewport.VerticalScroll.Visible, "Compact packages scroll");
+                        Check(table.Height - table.ColumnHeadersHeight >= table.RowTemplate.Height, "Compact package table retains a full row");
+                        var bottom = Find(form).OfType<BrandButton>().Single(button => button.Text == "В меню");
+                        viewport.ScrollControlIntoView(bottom);
+                        Application.DoEvents();
+                        Check(viewport.ClientRectangle.Contains(viewport.RectangleToClient(bottom.RectangleToScreen(bottom.ClientRectangle))),
+                            "Compact package footer is reachable by scrolling");
                         form.Close();
                     }
                 }
@@ -108,8 +120,12 @@ namespace ServiceTool
                         System.Reflection.BindingFlags.Instance).SetValue(programs, server);
                     programs.Show();
                     var table = Find(programs).OfType<ServiceGrid>().Single();
-                    Wait(() => table.Rows.Count == 1, "merged programs");
-                    Check(((string)table.Rows[0].Cells[4].Value).Contains("меньше 2 МБ"), "Tiny local EXE returned as ready after merging.");
+                    Wait(() => table.Rows.Count > 0, "merged programs");
+                    ClickPackageGroup(table, table.Rows[0]);
+                    ClickPackageGroup(table, table.Rows[1]);
+                    Check(table.Rows.Cast<DataGridViewRow>().Count(row => row.Cells[4].Value != null) == 1, "Merged program appears once");
+                    var package=table.Rows.Cast<DataGridViewRow>().Single(row => row.Cells[4].Value != null);
+                    Check(((string)package.Cells[4].Value).Contains("меньше 2 МБ") && (string)package.Cells[3].Value == "Локальный источник", "Tiny local EXE retains local source and error.");
                     programs.Close();
                 }
 
@@ -156,6 +172,33 @@ namespace ServiceTool
                 BarsReleaseCatalog.VerifyInstalledProgram(matching, installed);
                 Check(true, "Expected program and version accepted.");
 
+                foreach (bool dark in new[] { false, true })
+                foreach (bool services in new[] { false, true }) VerifyPackageGroups(root, dark, services);
+                Check(NewFolderNameDialog.DestinationText(@"C:\") == @"Папка будет создана на диске C:\", "Root destination identifies drive");
+                Check(NewFolderNameDialog.DestinationText(@"D:\Комплект").Contains(@"на диске D: в папке D:\Комплект"), "Nested destination identifies drive and directory");
+                Check(NewFolderNameDialog.DestinationText(@"\\server\share\folder").Contains("по пути"), "Network destination uses path wording");
+                foreach (bool dark in new[] { false, true })
+                using (var prompt = new NewFolderNameDialog(ThemePalette.Create(dark), null, root))
+                {
+                    prompt.Show();
+                    Application.DoEvents();
+                    var caption = Find(prompt).OfType<InputCaptionLabel>().Single();
+                    var frame = Find(prompt).OfType<PathFieldFrame>().Single();
+                    var status = Find(prompt).OfType<FlushLabel>().Single();
+                    var footer = ((Control)prompt.AcceptButton).Parent.Parent;
+                    Check(caption.Left == frame.Left && frame.Left == status.Left, "Caption, field and status share the left edge");
+                    Check(frame.Top - caption.Top > caption.Font.Height && frame.Bottom <= status.Top &&
+                            status.Bottom <= footer.Top && footer.Bottom <= footer.Parent.ClientSize.Height,
+                        "Compact layout preserves input spacing and footer: caption " + caption.Bounds + " font " + caption.Font.Height + " field " + frame.Bounds + " hint " + status.Bounds + " footer " + footer.Bounds + " parent " + footer.Parent.ClientSize);
+                    using (var image = new Bitmap(prompt.Width,prompt.Height))
+                    {
+                        prompt.DrawToBitmap(image, new Rectangle(Point.Empty,image.Size));
+                        image.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"new-folder-"+dark+".png"));
+                    }
+                    prompt.Close();
+                }
+                VerifyBundleDiscovery(root);
+                VerifyPackagePaths(root);
                 VerifyDetachedQueue(root, executing);
                 VerifyRetargeting(root, executing);
 
@@ -173,6 +216,206 @@ namespace ServiceTool
             }
             catch (Exception error) { Console.Error.WriteLine(error); return 1; }
             finally { Directory.Delete(root, true); }
+        }
+
+        private static void VerifyBundleDiscovery(string root)
+        {
+            string space = Directory.CreateDirectory(Path.Combine(root,"bundle-search")).FullName;
+            string executable = Directory.CreateDirectory(Path.Combine(space,"launcher")).FullName;
+            string primary = Directory.CreateDirectory(Path.Combine(space,"Комплект для касс")).FullName;
+            string secondary = Directory.CreateDirectory(Path.Combine(space,"Набор для стенда")).FullName;
+            string partial = Directory.CreateDirectory(Path.Combine(space,"Только программы Барс")).FullName;
+            string ignored = Directory.CreateDirectory(Path.Combine(space,"deep","middle","bottom")).FullName;
+            foreach (string path in new[] { primary, secondary, ignored })
+            {
+                File.WriteAllText(Path.Combine(Directory.CreateDirectory(Path.Combine(path,"_libraries")).FullName,"fixture.msi"),"metadata");
+                File.WriteAllText(Path.Combine(Directory.CreateDirectory(Path.Combine(path,"_tools")).FullName,"fixture.zip"),"metadata");
+            }
+            string programs = Directory.CreateDirectory(Path.Combine(partial,"_soft","_Bars","_Soft","2.12.xx.168","168.2")).FullName;
+            using (var stub = File.Create(Path.Combine(programs,"Bars.Administrator_v2.12.2.168.exe")))
+                stub.SetLength(BarsReleaseCatalog.MinimumProgramBytes);
+            string empty = Directory.CreateDirectory(Path.Combine(space,"empty","_libraries")).FullName;
+            File.Create(Path.Combine(empty,"empty.exe")).Dispose();
+            var drives = new[] { space };
+            var token = CancellationToken.None;
+            var candidates = BundleDiscovery.Find(BundleSection.Any, null, executable + Path.DirectorySeparatorChar, null, drives, token);
+            Check(candidates.Count == 2 && candidates.Any(item => item.Root == primary) && candidates.Any(item => item.Root == secondary),
+                "Search discovers renamed nearby sets and rejects incomplete and out-of-depth sets");
+            Check(BundleDiscovery.Find(BundleSection.Any,secondary,executable,null,drives,token).Single().Root == secondary,
+                "Remembered matching root has priority");
+            Check(BundleDiscovery.Find(BundleSection.BarsPrograms,primary,executable,null,drives,token).Single().Root == partial,
+                "A partial Bars bundle is recognized by the relevant package branch");
+            Check(BundleDiscovery.Find(BundleSection.Sql,null,executable,null,drives,token).Count == 0,
+                "Unrelated packages cannot satisfy SQL discovery");
+            using (var cancelled = new CancellationTokenSource())
+            {
+                cancelled.Cancel();
+                bool stopped = false;
+                try { BundleDiscovery.Find(BundleSection.Any,null,executable,null,drives,cancelled.Token); }
+                catch (OperationCanceledException) { stopped = true; }
+                Check(stopped,"Discovery honors cancellation");
+            }
+            candidates[0].Sections = BundleSection.Libraries | BundleSection.Software | BundleSection.Tools | BundleSection.Wallpapers |
+                BundleSection.Framework | BundleSection.Sql | BundleSection.BarsPrograms | BundleSection.BarsServices;
+            foreach (bool dark in new[] { false, true })
+            using (var picker = new BundleChoiceDialog(ThemePalette.Create(dark),null,candidates))
+            {
+                picker.Show();
+                Application.DoEvents();
+                var grid = Find(picker).OfType<ServiceGrid>().Single();
+                Check(grid.Rows.Count == 2 && grid.TouchScrollingEnabled &&
+                    (grid.Rows[0].Cells[1].Value as string).Contains("Библиотеки"), "Branded chooser lists detected sections");
+                Check(grid.CellBorderStyle == DataGridViewCellBorderStyle.Single &&
+                    grid.ColumnHeadersBorderStyle == DataGridViewHeaderBorderStyle.Single &&
+                    grid.ColumnHeadersDefaultCellStyle.Alignment == DataGridViewContentAlignment.MiddleCenter &&
+                    grid.ColumnHeadersDefaultCellStyle.Font.Bold, "Chooser uses library-grid header and borders");
+                Check(grid.Rows[0].Height > grid.Rows[1].Height && grid.DefaultCellStyle.WrapMode == DataGridViewTriState.True,
+                    "Long section list wraps without widening the dialog");
+                using (var bitmap = new Bitmap(picker.Width, picker.Height))
+                {
+                    picker.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
+                    bitmap.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "found-bundles-" + dark + ".png"));
+                }
+                grid.CurrentCell = grid.Rows[1].Cells[0];
+                ((Button)picker.AcceptButton).PerformClick();
+                Check(picker.SelectedRoot == candidates[1].Root, "Chooser returns the selected root");
+                picker.Close();
+            }
+        }
+
+        private static void VerifyPackagePaths(string root)
+        {
+            const string installer = "Bars.Administrator_v2.12.3.168.exe";
+            const string server = "BarsServer_2.8.8_BLSki_2.12.3.168.zip";
+            Check(BarsPackagePaths.Official(installer, null, false) == "2.12.xx.168/168.3/" + installer,
+                "Official installer goes into the series and minor folder");
+            Check(BarsPackagePaths.Official(server, "2.8.8", true) == "_bin/168.3/" + server,
+                "Common release suffix wins over the embedded server version");
+            Check(BarsPackagePaths.Official("HttpService.1.24.zip", null, true) == "HttpService.1.24.zip",
+                "Independent release stays at the service root");
+            var branch = BarsPackagePaths.Branch(true);
+            Check(BarsPackagePaths.Relative(branch + "/_bin/168.3/" + server, true) == "_bin/168.3/" + server &&
+                !BarsPackagePaths.Include(branch + "/_bin/_CUSTOM/" + server), "Yandex path and excluded subtree");
+            string local = Directory.CreateDirectory(Path.Combine(root, "path-fixture")).FullName;
+            Directory.CreateDirectory(Path.Combine(local, "_bin", "168.3"));
+            Directory.CreateDirectory(Path.Combine(local, "_custom"));
+            File.WriteAllText(Path.Combine(local, "_bin", "168.3", server), "fixture");
+            File.WriteAllText(Path.Combine(local, "_custom", server), "excluded");
+            Check(BarsPackagePaths.LocalFiles(local, true, CancellationToken.None).Single() == "_bin/168.3/" + server,
+                "Recursive local discovery excludes custom folders");
+        }
+
+        private static void VerifyPackageGroups(string root, bool dark, bool services)
+        {
+            string fixture = Directory.CreateDirectory(Path.Combine(root, "group-fixture")).FullName;
+            using (var form = new FixturePackages(fixture, services))
+            {
+                string suffix = services ? ".zip" : ".exe";
+                var versions = new[] { "2.12.0.168", "2.12.2.168", "2.12.1.168", "2.12.0.169" }
+                    .Concat(Enumerable.Range(140,20).Select(number => "2.12.0." + number)).ToArray();
+                var catalog = versions.SelectMany(version => new[] { "Bars.CacheDesk", "Bars.Administrator" }
+                    .Select(name => new BarsReleaseCatalog.Artifact { fileName = name + "_" + version + suffix, Version = version, Channel = "stable" })).ToList();
+                catalog.Add(new BarsReleaseCatalog.Artifact { fileName = "Unknown" + suffix, Channel = "stable" });
+                typeof(BarsPackagesForm).GetField("remote", System.Reflection.BindingFlags.NonPublic |
+                    System.Reflection.BindingFlags.Instance).SetValue(form, catalog);
+                form.SetTheme(dark, false);
+                form.Show();
+                var table = Find(form).OfType<ServiceGrid>().Single();
+                Wait(() => table.Rows.Count > 0, "grouped catalog");
+                Func<string, DataGridViewRow> rowNamed = label => table.Rows.Cast<DataGridViewRow>()
+                    .SingleOrDefault(row => ((string)row.Cells[1].Value).StartsWith(label, StringComparison.Ordinal));
+                var scroll = Find(form).OfType<LibraryGridScrollBar>().Single();
+                var picker = Find(form).OfType<BrandComboBox>().Single();
+                Check(picker.UseManagedPopup && picker.Items.Cast<string>().SequenceEqual(new[] { "Официальный репозиторий", "Яндекс Диск" }),
+                    "Both sources use the branded popup");
+                if (services)
+                {
+                    var visible = table.Rows.Cast<DataGridViewRow>().ToArray();
+                    Check(visible.Length == 2 && (string)visible[0].Cells[1].Value == "_Services" &&
+                        (string)visible[1].Cells[1].Value == "_bin", "Standalone service packages precede the collapsed release directory");
+                    ClickPackageGroup(table, visible[1]);
+                    Check(rowNamed("Выпуск 168") != null, "Release header appears under _bin");
+                }
+                else
+                    Check(table.Rows.Cast<DataGridViewRow>().All(row => ((string)row.Cells[1].Value).StartsWith("Выпуск ") ||
+                        (string)row.Cells[1].Value == "Без версии"), "Only release headers are allocated on first open");
+                var newest = rowNamed("Выпуск 169");
+                var major = rowNamed("Выпуск 168");
+                Check(newest.Index < major.Index, "Newest major group first");
+                ClickPackageGroup(table, newest);
+                var newestChild = rowNamed("Версия 2.12.0.169");
+                ClickPackageGroup(table, newestChild);
+                var first169 = table.Rows[newestChild.Index + 1];
+                Check(((string)first169.Cells[1].Value).StartsWith("Bars.Administrator") &&
+                    (string)first169.Cells[3].Value == "Официальный репозиторий", "Product ordering and official source caption");
+                ClickPackageGroup(table, newest);
+                ClickPackageGroup(table, major);
+                var child = rowNamed("Версия 2.12.2.168");
+                Check(child.Index < rowNamed("Версия 2.12.1.168").Index &&
+                    rowNamed("Версия 2.12.1.168").Index < rowNamed("Версия 2.12.0.168").Index, "Newest minor groups first");
+                Check(rowNamed("Bars.Administrator") == null, "Click opens release synchronously and keeps versions collapsed");
+                table.FirstDisplayedScrollingRowIndex = child.Index;
+                TapPackageRow(table, child, false);
+                var first = table.Rows[child.Index + 1];
+                Check(first.Cells[4].Value != null, "Touch expands version before processing deferred redraw");
+                Application.DoEvents();
+                TapPackageRow(table, first);
+                Check((bool)first.Cells[0].Value, "Single touch selects a package");
+                TapPackageRow(table, child);
+                Check(first.Index == -1 && ((string)child.Cells[1].Value).Contains("Выбрано: 1"), "Collapsed child removes rows and shows selection count");
+                table.FirstDisplayedScrollingRowIndex = major.Index;
+                TapPackageRow(table, major);
+                Check(child.Index == -1 && ((string)major.Cells[1].Value).Contains("Выбрано: 1"), "Collapsed release shows selection count");
+                TapPackageRow(table, major);
+                child = rowNamed("Версия 2.12.2.168");
+                Check(child != null && rowNamed("Bars.Administrator") == null, "Reopening release restores child collapse state");
+                TapPackageRow(table, child);
+                first = table.Rows[child.Index + 1];
+                Check((bool)first.Cells[0].Value, "Reopening child preserves selected package");
+                using (var bitmap = new Bitmap(form.Width, form.Height))
+                {
+                    form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
+                    bitmap.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,
+                        "bars-groups-" + (services ? "services" : "programs") + "-" + dark + ".png"));
+                }
+                TapPackageRow(table, child);
+                Check(first.Index == -1, "Nested rows stay unallocated during scrolling");
+                table.FirstDisplayedScrollingRowIndex = 0;
+                for (int pass=0;pass<4;pass++)
+                {
+                    int before = table.FirstDisplayedScrollingRowIndex;
+                    table.TouchPan(new Point(70,200),true,false);
+                    table.TouchPan(new Point(70,120),false,true);
+                    int after = table.FirstDisplayedScrollingRowIndex;
+                    int steps = after - before;
+                    Check(after > before && steps < 6 && table.Rows[after].Visible, "Small touch swipe scrolls a few visible rows");
+                }
+                table.TouchPan(new Point(70,200),true,false);
+                table.TouchPan(new Point(70,-10000),false,true);
+                Check(table.Rows[table.FirstDisplayedScrollingRowIndex].Visible && scroll.Visible, "Touch scroll reaches final page with themed scrollbar");
+                table.FirstDisplayedScrollingRowIndex = child.Index;
+                TapPackageRow(table, child);
+                Check((bool)table.Rows[child.Index + 1].Cells[0].Value, "Swipe does not toggle a checkbox");
+                form.Close();
+            }
+        }
+
+        private static void ClickPackageGroup(ServiceGrid table, DataGridViewRow row)
+        {
+            var click = typeof(DataGridView).GetMethod("OnCellMouseDown",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic, null, new[] { typeof(DataGridViewCellMouseEventArgs) }, null);
+            click.Invoke(table, new object[] { new DataGridViewCellMouseEventArgs(1,row.Index,12,12,
+                new MouseEventArgs(MouseButtons.Left,1,12,12,0)) });
+        }
+
+        private static void TapPackageRow(ServiceGrid table, DataGridViewRow row, bool pump = true)
+        {
+            var bounds = table.GetCellDisplayRectangle(1,row.Index,true);
+            if(bounds.Height==0) throw new InvalidOperationException("Tap row is outside viewport");
+            var point = new Point(bounds.Left+20,bounds.Top+bounds.Height/2);
+            table.TouchMouse(0x201,point,true);
+            table.TouchMouse(0x202,point,true);
+            if (pump) Application.DoEvents();
         }
 
         private static void VerifyDetachedQueue(string root, string executing)

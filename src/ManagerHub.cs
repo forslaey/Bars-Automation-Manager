@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Threading;
 using System.Windows.Forms;
 
 namespace ServiceTool
@@ -163,14 +164,14 @@ namespace ServiceTool
             };
 
             modules.Controls.Add(ModuleCard("Менеджер служб", "Установка служб и настройка их запуска.\r\nПроверка состояния и удобный сбор логов.", "Менеджер служб", delegate { OpenModule(() => new MainForm(null, false)); }), 2, 0);
-            modules.Controls.Add(ModuleCard("Менеджер библиотек", "Установка и проверка библиотек.\r\nОбновления .NET и Windows.", "Менеджер библиотек", delegate { OpenModule(() => new LibraryManagerForm(false)); }), 1, 0);
-            modules.Controls.Add(ModuleCard("Прикладные программы", "Установка и удаление программ.\r\nНастройка удалённого доступа.", "Прикладные программы", delegate { OpenModule(() => new SoftwareManagerForm(false)); }), 0, 2);
-            modules.Controls.Add(ModuleCard("Утилиты и прошивки", "Скачивание, распаковка, удаление фирменных утилит и прошивок.", "Утилиты и прошивки", delegate { OpenModule(() => new ToolsDeploymentForm(false)); }), 1, 2);
+            modules.Controls.Add(ModuleCard("Менеджер библиотек", "Установка и проверка библиотек.\r\nОбновления .NET и Windows.", "Менеджер библиотек", delegate { OpenBundleModule(BundleSection.Libraries, () => new LibraryManagerForm(false)); }), 1, 0);
+            modules.Controls.Add(ModuleCard("Прикладные программы", "Установка и удаление программ.\r\nНастройка удалённого доступа.", "Прикладные программы", delegate { OpenBundleModule(BundleSection.Software, () => new SoftwareManagerForm(false)); }), 0, 2);
+            modules.Controls.Add(ModuleCard("Утилиты и прошивки", "Скачивание, распаковка, удаление фирменных утилит и прошивок.", "Утилиты и прошивки", delegate { OpenBundleModule(BundleSection.Tools, () => new ToolsDeploymentForm(false)); }), 1, 2);
             modules.Controls.Add(ModuleCard("Первичные системные настройки", "Политики и защита Windows.\r\nПрава папок и режим КСО.", "Открыть настройки", delegate { OpenModule(() => new InitialSystemSettingsForm()); }), 0, 0);
             modules.Controls.Add(ModuleCard("Логи программ", "Удобный сбор логов для модулей Барс.", "ЛОГИ ПРОГРАММ", delegate { OpenModule(() => new ApplicationLogsForm()); }), 2, 2);
-            modules.Controls.Add(ModuleCard("SQL Server и SQL Server Management Studio", "Комплекты SQL Server и SSMS.", "SQL Server и SSMS", delegate { OpenModule(() => new SqlModuleForm()); }), 0, 1);
-            modules.Controls.Add(ModuleCard("Программы Барс", "Загрузка и тихая установка программ.", "Программы Барс", delegate { OpenModule(() => new BarsProgramsForm()); }), 1, 1);
-            modules.Controls.Add(ModuleCard("Службы и агенты Барс", "Загрузка и распаковка архивов служб.", "Службы и агенты Барс", delegate { OpenModule(() => new BarsServicesForm()); }), 2, 1);
+            modules.Controls.Add(ModuleCard("SQL Server и SQL Server Management Studio", "Комплекты SQL Server и SSMS.", "SQL Server и SSMS", delegate { OpenBundleModule(BundleSection.Sql, () => new SqlModuleForm()); }), 0, 1);
+            modules.Controls.Add(ModuleCard("Программы Барс", "Загрузка и тихая установка программ.", "Программы Барс", delegate { OpenBundleModule(BundleSection.BarsPrograms, () => new BarsProgramsForm()); }), 1, 1);
+            modules.Controls.Add(ModuleCard("Службы и агенты Барс", "Загрузка и распаковка архивов служб.", "Службы и агенты Барс", delegate { OpenBundleModule(BundleSection.BarsServices, () => new BarsServicesForm()); }), 2, 1);
             body.Controls.Add(modules, 0, 1);
             var footer = new Panel { Dock = DockStyle.Fill, Margin = new Padding(5, 0, 5, 0), Padding = new Padding(0, 12, 0, 12) };
             var about = Button("ⓘ", false);
@@ -186,7 +187,7 @@ namespace ServiceTool
                 if (!IsDisposed) SetTheme(ThemePreference.LoadDark(), false);
             };
             var bundle = Button("Скачать комплект", false);
-            bundle.Click += delegate { OpenModule(() => new BundleDownloadForm()); };
+            bundle.Click += delegate { OpenBundleModule(BundleSection.Any, () => new BundleDownloadForm()); };
             var exit = Button("Закрыть программу", false);
             exit.Click += delegate { Close(); };
 
@@ -227,6 +228,7 @@ namespace ServiceTool
             body.Controls.Add(footer, 0, 3);
             Root.Controls.Add(body, 0, 1);
             LimitContent(new Size(1260, 860));
+            FormClosed += delegate { if (bundleSearch != null) bundleSearch.Cancel(); };
             SetTheme(Colors.Dark, false);
         }
         private const int ModuleRowHeight = 160;
@@ -295,12 +297,37 @@ namespace ServiceTool
         internal Func<Form> RequestedModule { get; private set; }
         internal Type RequestedModuleType { get; private set; }
 
+        private CancellationTokenSource bundleSearch;
+
+        private async void OpenBundleModule<T>(BundleSection section, Func<T> factory) where T : Form
+        {
+            var context = ManagerApplicationContext.ActiveContext;
+            if (IsDisposed || (context != null && context.ActivateExisting(typeof(T)))) return;
+            if (bundleSearch != null) bundleSearch.Cancel();
+            var search = new CancellationTokenSource();
+            bundleSearch = search;
+            string root = null;
+            try { root = await BundleChoiceDialog.Choose(this, Colors, section, search.Token); }
+            catch (OperationCanceledException) { return; }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            finally
+            {
+                if (bundleSearch == search) bundleSearch = null;
+                search.Dispose();
+            }
+            if (IsDisposed || !Visible || (context != null && context.ExitConfirmed)) return;
+            if (root != null) BundlePreferences.UseDiscoveredRoot(section, root);
+            OpenModule(factory);
+        }
+
         internal void OpenModule<T>(Func<T> factory) where T : Form
         {
             OpenModule(typeof(T), () => factory());
         }
         internal void OpenModule(Type type, Func<Form> factory)
         {
+            if (bundleSearch != null) bundleSearch.Cancel();
             if (IsDisposed) return;
             var context = ManagerApplicationContext.ActiveContext;
             if (context != null) { context.OpenModule(type, factory); return; }

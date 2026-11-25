@@ -8,6 +8,16 @@ namespace ServiceTool
  {
   [System.Runtime.InteropServices.DllImport("user32.dll")]static extern IntPtr SendMessage(IntPtr handle,int message,IntPtr wp,IntPtr lp);
   static void NativeWheel(Control target,int delta){var point=target.PointToScreen(new Point(10,10));var location=new IntPtr((point.X&0xffff)|((point.Y&0xffff)<<16));SendMessage(target.Handle,0x20A,new IntPtr(delta<<16),location);Application.DoEvents();}
+  static bool WaitFor(Func<bool> condition)
+  {
+   var elapsed = System.Diagnostics.Stopwatch.StartNew();
+   while (!condition() && elapsed.ElapsedMilliseconds < 1000)
+   {
+    Application.DoEvents();
+    System.Threading.Thread.Sleep(5);
+   }
+   return condition();
+  }
   static int count;
   static void Check(bool ok,string text){count++;if(!ok)throw new Exception(text);}
   [STAThread] static int Main()
@@ -27,10 +37,14 @@ namespace ServiceTool
      support.TouchMouse(0x201,new Point(2,100),true);support.TouchMouse(0x200,new Point(2,20),true);Check(support.TouchMouse(0x202,new Point(2,20),true),"Swipe suppresses click");
      support.Reset();journal.Enabled=false;support.Pan(new Point(0,100),true,false);support.Pan(Point.Empty,false,true);Check(journal.FirstVisibleLine==0,"Disabled no pan");
     }
-    using(var form=new Form {ClientSize=new Size(450,240)})using(var reader=new GuideReader {Dock=DockStyle.Fill}) {
-     form.Controls.Add(reader);reader.Text=String.Join("\n",Enumerable.Range(0,200).Select(i=>"Описание "+i));form.Show();Application.DoEvents();
+    using(var form=new Form {ClientSize=new Size(450,240)})using(var reader=new GuideReader {Dock=DockStyle.Fill, ReadOnly=true, WordWrap=true,
+        HideSelection=true, DetectUrls=false, ScrollBars=RichTextBoxScrollBars.None}) {
+     form.Controls.Add(reader);reader.Text=String.Join("\n",Enumerable.Range(0,200).Select(i=>"Описание "+i));form.Show();reader.Focus();reader.Update();Application.DoEvents();
      var field=typeof(GuideReader).GetField("touchScroll",System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic);var support=(TouchScrollSupport)field.GetValue(reader);
-     support.Pan(new Point(0,180),true,false);support.Pan(Point.Empty,false,true);Check(reader.ScrollPosition>0,"Guide pan");reader.ScrollTo(0);Application.DoEvents();NativeWheel(reader,-120);Check(reader.ScrollPosition>0,"Native wheel on instruction reader");
+     support.Pan(new Point(0,180),true,false);support.Pan(Point.Empty,false,true);Check(reader.ScrollPosition>0,"Guide pan");reader.ScrollTo(0);
+     Check(WaitFor(() => reader.ScrollPosition == 0), "Reader reaches the top before the wheel test");
+     NativeWheel(reader,-120);
+     Check(WaitFor(() => reader.ScrollPosition > 0), "Native wheel on instruction reader");
     }
     using(var form=new Form {ClientSize=new Size(450,240)})using(var list=new GuideSectionListBox {Dock=DockStyle.Fill}) {
      form.Controls.Add(list);for(int i=0;i<100;i++)list.Items.Add("Раздел "+i);form.Show();Application.DoEvents();list.SelectedIndex=0;

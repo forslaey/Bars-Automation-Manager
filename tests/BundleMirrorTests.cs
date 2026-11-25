@@ -63,6 +63,22 @@ namespace ServiceTool
    string html="window['_DRIVE_ivd'] = '[[[\"abc\",[\"parent\"],\"file.txt\",\"text/plain\",0,null,0,0,0,0,0,null,null,10]],null,null]';";Check(GoogleBundleSource.Parse(html).Length==1,"Public Google listing parser");
    Check(GoogleBundleSource.Parse("window['_DRIVE_ivd'] = '[null,null,null]';").Length==0,"Empty public folder is a valid listing");
    bool denied=false;try{GoogleBundleSource.Parse(html.Replace("null,null]","\"next\",null]"));}catch(System.IO.InvalidDataException){denied=true;}Check(denied,"Incomplete listing fails closed");
+   int driveCalls = 0;
+   var pages = GoogleBundleSource.DrivePages("testFolder", url =>
+   {
+    driveCalls++;
+    if (driveCalls == 1)
+     return "{\"nextPageToken\":\"next +/\",\"files\":[{\"id\":\"first\",\"name\":\"first.zip\",\"mimeType\":\"application/zip\",\"size\":\"100\",\"version\":\"2\"}]}";
+    Check(url.EndsWith("&pageToken=next%20%2B%2F"), "Drive continuation token is escaped and sent");
+    return "{\"files\":[{\"id\":\"last\",\"name\":\"last.zip\",\"mimeType\":\"application/zip\",\"size\":\"100\",\"version\":\"3\"}]}";
+   }, System.Threading.CancellationToken.None).ToArray();
+   Check(driveCalls == 2 && (string)pages[1][0] == "last", "Drive interface reads both pages");
+   var independent = GoogleBundleSource.IndependentFile("/_tools/first.zip", 100, "first", pages[0]);
+   var sameIndependent = GoogleBundleSource.IndependentFile("/_tools/first.zip", 100, "first", pages[0]);
+   pages[0][14] = "4";
+   var revisedIndependent = GoogleBundleSource.IndependentFile("/_tools/first.zip", 100, "first", pages[0]);
+   Check(independent.TransferId == sameIndependent.TransferId && independent.TransferId != revisedIndependent.TransferId,
+       "Google revision keeps resume identity across scans and invalidates changed files");
    using(var check=new BundleCloudDialog(true)){var choices=Children(check).OfType<BrandCheckBox>().ToArray();choices[1].Checked=true;Check(choices.All(c=>c.Checked),"Both clouds allowed for checking");}
    using(var download=new BundleCloudDialog(false)){var choices=Children(download).OfType<BrandCheckBox>().ToArray();choices[1].Checked=true;Check(!choices[0].Checked&&choices[1].Checked,"Download cloud exclusive");}
    var item=new BundleDifferenceItem {Path="missing.exe",State="Нет в папке",Allowed=true,Selected=true};using(var result=new BundleDifferencesForm(new[]{item})){result.Show();Application.DoEvents();var grid=Children(result).OfType<ServiceGrid>().Single();typeof(DataGridView).GetMethod("OnCellMouseDown",System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic,null,new[]{typeof(DataGridViewCellMouseEventArgs)},null).Invoke(grid,new object[]{new DataGridViewCellMouseEventArgs(1,0,0,0,new MouseEventArgs(MouseButtons.Left,1,0,0,0))});Check(!item.Selected,"Whole row toggles saved selection");}

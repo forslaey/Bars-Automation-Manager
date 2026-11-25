@@ -39,7 +39,30 @@ namespace ServiceTool
             standardButton=Button("Стандарт Windows",false);standardButton.Margin=new Padding(6,0,6,0);standardButton.Click+=async delegate{if(SelectedGroup=="folders")await Check();else await Apply(SelectedGroup,true);};
             refresh=Button("Проверить настройки",false);refresh.Margin=new Padding(6,0,6,0);refresh.Click+=async delegate{await Check();};
             actions.Controls.Add(applyButton,0,0);actions.Controls.Add(standardButton,1,0);actions.Controls.Add(refresh,2,0);var wallpaper=Button("Применить обои",false);wallpaper.Margin=new Padding(6,0,6,0);
-            wallpaper.Click+=delegate{using(var dialog=new WallpaperForm(Colors))ScopedDialogs.Show(this,dialog);};
+            wallpaper.Click+=async delegate
+            {
+                wallpaper.Enabled = false;
+                using (var search = new System.Threading.CancellationTokenSource())
+                {
+                    FormClosedEventHandler closed = (sender, args) => search.Cancel();
+                    FormClosed += closed;
+                    try
+                    {
+                        string root = await BundleChoiceDialog.Choose(this, Colors, BundleSection.Wallpapers, search.Token);
+                        if (IsDisposed || ClosingAfterOperation) return;
+                        if (root != null) BundlePreferences.UseDiscoveredRoot(BundleSection.Wallpapers, root);
+                        using (var dialog = new WallpaperForm(Colors)) ScopedDialogs.Show(this, dialog);
+                    }
+                    catch (OperationCanceledException) { }
+                    catch (System.IO.IOException error) { if (!IsDisposed) Log("Не удалось найти комплект обоев. " + error.Message); }
+                    catch (UnauthorizedAccessException error) { if (!IsDisposed) Log("Не удалось найти комплект обоев. " + error.Message); }
+                    finally
+                    {
+                        FormClosed -= closed;
+                        if (!IsDisposed) wallpaper.Enabled = true;
+                    }
+                }
+            };
             actions.Controls.Add(wallpaper,3,0);
             var timeZone=Button("Часовой пояс",false);
             timeZone.Margin=new Padding(6,0,0,0);

@@ -16,6 +16,7 @@ namespace ServiceTool
         internal long Size;
         internal string Sha256;
         internal string TransferId;
+        internal static bool IsBarsPackage(string path) { return path.Equals("/_soft/_Bars", StringComparison.OrdinalIgnoreCase) || path.StartsWith("/_soft/_Bars/", StringComparison.OrdinalIgnoreCase); }
         internal string Group
         {
             get
@@ -23,6 +24,7 @@ namespace ServiceTool
                 if (Path.StartsWith("/_soft/_SQL/", StringComparison.OrdinalIgnoreCase) ||
                     Path.StartsWith("/_sql/", StringComparison.OrdinalIgnoreCase) ||
                     Path.StartsWith("/SQL/", StringComparison.OrdinalIgnoreCase)) return "SQL";
+                if (IsBarsPackage(Path)) return "Программы, службы и агенты Барс";
                 if (Path.StartsWith("/_soft/", StringComparison.OrdinalIgnoreCase)) return "Программы";
                 if (Path.StartsWith("/_tools/", StringComparison.OrdinalIgnoreCase)) return "Утилиты";
                 if (Path.StartsWith("/_wallpers/", StringComparison.OrdinalIgnoreCase)) return "Обои";
@@ -97,9 +99,9 @@ namespace ServiceTool
                 }
             }
         }
-        internal List<BundleRemoteFile> Scan(CancellationToken token)
+        internal List<BundleRemoteFile> Scan(CancellationToken token, string root = "/", Func<string,bool> include = null)
         {
-            var queue=new Queue<string>();queue.Enqueue("/");var visited=new HashSet<string>(StringComparer.OrdinalIgnoreCase);var paths=new HashSet<string>(StringComparer.OrdinalIgnoreCase);var files=new List<BundleRemoteFile>();
+            var queue=new Queue<string>();queue.Enqueue(root);var visited=new HashSet<string>(StringComparer.OrdinalIgnoreCase);var paths=new HashSet<string>(StringComparer.OrdinalIgnoreCase);var files=new List<BundleRemoteFile>();
             while(queue.Count>0)
             {
                 token.ThrowIfCancellationRequested();string directory=queue.Dequeue();if(!visited.Add(directory))throw new InvalidDataException("Повтор каталога в ответе источника");
@@ -114,6 +116,7 @@ namespace ServiceTool
                         LocalPath(Path.Combine(Path.GetTempPath(),"bars-bundle-path-check"),path);
                         if(!path.StartsWith(directory=="/"?"/":directory+"/",StringComparison.Ordinal)||path.Substring(directory=="/"?1:directory.Length+1).Contains("/"))throw new InvalidDataException("Некорректная вложенность каталога");
                         if(!paths.Add(path))throw new InvalidDataException("Повтор пути в комплекте");
+                        if (include != null && !include(path)) continue;
                         if((string)item["type"]=="dir")
                         {
                             if(!path.Equals("/Журнал установки библиотек",StringComparison.OrdinalIgnoreCase))queue.Enqueue(path);

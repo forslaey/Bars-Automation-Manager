@@ -32,6 +32,19 @@ namespace ServiceTool
             {
                 Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
                 Check(UserGuide.Sections.Length >= 12, "All modules have guide sections");
+                var introduction = UserGuide.Sections.Single(section => section.Title == "Начало работы").Body;
+                Check(introduction.Contains("Ctrl+F") && introduction.Contains("Проверить обновления"),
+                    "Search and program updates share the introductory section");
+                var start = UserGuide.Sections.Single(section => section.Title == "Найти комплект и выбрать папку").Body;
+                Check(UserGuide.Sections.Select(section => section.Title).Distinct().Count() == UserGuide.Sections.Length &&
+                    UserGuide.Sections.Any(section => section.Title == "Собрать логи программы или службы"),
+                    "Guide combines related tasks without duplicate menu entries");
+                Check(new[] { "Найденные комплекты", "Выбрать комплект", "Новая папка", "в текущем сеансе" }
+                    .All(term => start.Contains(term)), "Guide explains automatic discovery, choice, session scope and folder creation");
+                var bars = UserGuide.Sections.Single(section => section.Title == "Программы Барс, службы и агенты").Body;
+                Check(new[] { "Официальный репозиторий", "Яндекс Диск", "Локальный источник", "2.168, 1.168, 0.168",
+                    "группы свёрнуты", "_custom", "SHA-256", @"_Soft\2.12.xx.168\168.2", @"_Services\_bin\168.2" }
+                    .All(term => bars.Contains(term)), "Guide documents both sources, collapsed groups and the current storage layout");
                 Check(UserGuide.Find("Отмена ОТМЕНА", "отмена").SequenceEqual(new[] { 0, 7 }), "Case-insensitive search");
                 Check(UserGuide.Find("text", " ").Count == 0, "Whitespace query is empty");
                 using (var banner = new PictureBox()) using (var tips = new ToolTip())

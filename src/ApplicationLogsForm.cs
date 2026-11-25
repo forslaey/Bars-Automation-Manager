@@ -62,7 +62,7 @@ namespace ServiceTool
             {
                 if (running.Rows.Count != 0) return;
                 var area = Rectangle.FromLTRB(0, running.ColumnHeadersHeight, running.ClientSize.Width, running.ClientSize.Height);
-                TextRenderer.DrawText(e.Graphics, scanning ? "Ищем программы BARS…" : "Запущенные программы BARS не найдены.",
+                TextRenderer.DrawText(e.Graphics, scanning ? "Ищем программы Барс…" : "Запущенные программы Барс не найдены.",
                     running.Font, area, Colors.Muted, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
             };
             running.CellClick += delegate(object sender, DataGridViewCellEventArgs e)

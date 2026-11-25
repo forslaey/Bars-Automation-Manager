@@ -10,7 +10,7 @@ namespace ServiceTool
         // backup until the new destination is present. Failed rollback retains it.
         internal static void Publish(string source,string destination,string expected,CancellationToken token,Action<string> checkpoint)
         {
-            string backup=Path.Combine(Path.GetDirectoryName(source),"backup-"+Guid.NewGuid().ToString("N")+".previous");
+            string backup=Path.Combine(Path.GetDirectoryName(source),Guid.NewGuid().ToString("N").Substring(0,12)+".bak");
             bool moved=false;
             Action<string> step=name=>{token.ThrowIfCancellationRequested();if(checkpoint!=null)checkpoint(name);token.ThrowIfCancellationRequested();};
             step("before-publish");

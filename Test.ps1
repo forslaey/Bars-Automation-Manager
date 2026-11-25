@@ -1,4 +1,4 @@
-﻿param([string] $BuildDirectory, [switch] $Sign, [string] $ReferenceAssemblies, [switch] $UtilitySmoke, [switch] $SoftwareSmoke, [switch] $Audit, [switch] $LayoutAudit, [switch] $FindingsAudit)
+param([string] $BuildDirectory, [switch] $Sign, [string] $ReferenceAssemblies, [switch] $UtilitySmoke, [switch] $SoftwareSmoke, [switch] $Audit, [switch] $LayoutAudit, [switch] $FindingsAudit, [switch] $BundleWorkflow)
 $ErrorActionPreference = 'Stop'
 $taskCompiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 if (-not (Test-Path -LiteralPath $taskCompiler)) {
@@ -59,8 +59,16 @@ if ($FindingsAudit) {
     if ($taskFailures.Count) { throw ("Не пройдены проверки: " + ($taskFailures -join ", ")) }
     return
 }
+if ($BundleWorkflow) {
+    foreach ($name in @('Audit2393Tests','BundleUiRevisionTests','BundleTests','BundleTransportTests','BundleMirrorTests','SqlManagerTests','GuideDpiTests','UserGuideTests')) {
+        Invoke-TaskTests $name ("ServiceTool." + $name) ($taskUiSources + (Join-Path $taskTests ($name + '.cs')))
+    }
+    if ($taskFailures.Count) { throw ("Не пройдены проверки: " + ($taskFailures -join ", ")) }
+    return
+}
+
 if ($LayoutAudit) {
-    foreach ($name in @('LogArchiveUiTests','ResponsiveLayoutTests','DownloadProgressTests')) {
+    foreach ($name in @('LogArchiveUiTests','ResponsiveLayoutTests','PhysicalViewportAudit','DownloadProgressTests')) {
         Invoke-TaskTests $name ("ServiceTool." + $name) ($taskUiSources + (Join-Path $taskTests ($name + '.cs')))
     }
     if ($taskFailures.Count) { throw ("Не пройдены проверки: " + ($taskFailures -join ", ")) }

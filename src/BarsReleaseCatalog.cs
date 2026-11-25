@@ -59,8 +59,7 @@ namespace ServiceTool
                     {
                         token.ThrowIfCancellationRequested();
                         if (!file.canDownload || file.artifactId == Guid.Empty || !ValidName(file.fileName, services) ||
-                            (!services && file.sizeBytes < MinimumProgramBytes) ||
-                            (services && !IsServiceArchive(file.fileName))) continue;
+                            (!services && file.sizeBytes < MinimumProgramBytes)) continue;
                         file.Version = release.version;
                         file.Channel = release.channel;
                         result.Add(file);
@@ -68,13 +67,6 @@ namespace ServiceTool
                     return result.GroupBy(item => item.artifactId).Select(group => group.First()).ToList();
                 }
             });
-        }
-
-        internal static bool IsServiceArchive(string name)
-        {
-            string file = Path.GetFileNameWithoutExtension(name);
-            return new[] { "service", "agent", "barsserver" }.Any(
-                word => file.IndexOf(word, StringComparison.OrdinalIgnoreCase) >= 0);
         }
 
         internal static bool ValidName(string name, bool services)
@@ -86,7 +78,7 @@ namespace ServiceTool
             return new[]{".zip", ".rar", ".7z"}.Contains(extension, StringComparer.OrdinalIgnoreCase);
         }
 
-        private T Read<T>(string route, string body, CancellationToken token, Func<HttpWebResponse, T> consume)
+        private T Read<T>(string route, string body, CancellationToken token, Func<HttpWebResponse, T> consume, string failureMessage = "Не удалось получить данные из официального репозитория Барс.")
         {
             token.ThrowIfCancellationRequested();
             ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
@@ -110,7 +102,7 @@ namespace ServiceTool
                     }
                     using (var response = (HttpWebResponse)request.GetResponse())
                     {
-                        if (response.StatusCode != HttpStatusCode.OK) throw new IOException("Сервер вернул неожиданный ответ.");
+                        if (response.StatusCode != HttpStatusCode.OK) throw new IOException(failureMessage);
                         return consume(response);
                     }
                 }
@@ -122,19 +114,19 @@ namespace ServiceTool
                         if (response != null && (response.StatusCode == HttpStatusCode.Unauthorized || response.StatusCode == HttpStatusCode.Forbidden))
                             throw new IOException("Сервер отклонил вход или доступ к файлу. Проверь учётную запись и разрешения.");
                     }
-                    throw new IOException("Не удалось получить данные с сервера Bars.Release.", error);
+                    throw new IOException(failureMessage, error);
                 }
             }
         }
 
-        internal void Download(Artifact item, string folder, bool services, CancellationToken token, Action<TransferProgress> report)
+        internal void Download(Artifact item, string destination, string original, bool services, CancellationToken token, Action<TransferProgress> report)
         {
             if (!ValidName(item.fileName, services)) throw new InvalidDataException("Некорректное имя файла.");
-            string destination = YandexBundleSource.LocalPath(folder, "/" + item.fileName);
+            string folder = Path.GetDirectoryName(destination);
             ToolsDeployment.SafePath(folder);
             Directory.CreateDirectory(folder);
             ToolsDeployment.SafePath(destination);
-            string staging = Path.Combine(folder, ".bars-" + Guid.NewGuid().ToString("N") + ".tmp");
+            string staging = Path.Combine(folder, ".bars-" + Guid.NewGuid().ToString("N").Substring(0, 12) + ".tmp");
             try
             {
                 Read("/api/artifacts/" + item.artifactId + "/download", null, token, response =>
@@ -161,7 +153,7 @@ namespace ServiceTool
                             throw new InvalidDataException("Файл скачан не полностью.");
                     }
                     return true;
-                });
+                }, "Не удалось скачать файл с официального репозитория.");
                 report(new TransferProgress { Stage = "Проверяем скачанный файл", File = item.fileName });
                 if (services)
                 {
@@ -171,8 +163,11 @@ namespace ServiceTool
                 else ValidateExecutable(staging);
                 VerifyDigest(staging, item.sha256);
                 token.ThrowIfCancellationRequested();
-                if (File.Exists(destination)) File.Replace(staging, destination, null);
-                else File.Move(staging, destination);
+                lock (BundlePublication.Gate)
+                {
+                    ToolsDeployment.SafePath(destination);
+                    BundlePublication.Publish(staging, destination, original, token, null);
+                }
             }
             finally
             {
