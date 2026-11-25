@@ -1,4 +1,4 @@
-﻿param([Parameter(Mandatory=$true)][string]$ScriptFolder)
+param([Parameter(Mandatory=$true)][string]$ScriptFolder)
 $ErrorActionPreference='Stop'
 $folder=$ScriptFolder
 foreach($file in Get-ChildItem -LiteralPath $folder -Filter '*-*.ps1' | Where-Object {$_.Name -match '^(query|apply|defaults)-'}){
@@ -12,8 +12,16 @@ function New-Item($Path,[switch]$Force){if($Path -notlike 'HKLM:*'){throw 'Unexp
 function New-ItemProperty($LiteralPath,$Name,$Value,$PropertyType,[switch]$Force){$script:registry[$LiteralPath+'|'+$Name]=[string]$Value}
 function Remove-ItemProperty($LiteralPath,$Name,$ErrorAction){$script:registry.Remove($LiteralPath+'|'+$Name)}
 $script:profiles=@('Domain','Private','Public')|ForEach-Object {[pscustomobject]@{Name=$_;Enabled=$true}}
-function Set-NetFirewallProfile($Profile,$Enabled,$PolicyStore){if(($Profile -join ',') -ne 'Domain,Private,Public'){throw 'Wrong profiles'};foreach($p in $script:profiles){$p.Enabled=[bool]::Parse($Enabled)}}
-function Get-NetFirewallProfile($PolicyStore){return $script:profiles}
+function Set-NetFirewallProfile($Profile,$Enabled,$PolicyStore){if(($Profile -join ',') -ne 'Domain,Private,Public'){throw 'Wrong profiles'};if($PolicyStore -ne "PersistentStore"){throw "Expected local store"};$script:firewallWrites++;foreach($p in $script:profiles){$p.Enabled=[bool]::Parse($Enabled)}}
+function Start-Sleep($Milliseconds){if($Milliseconds -ne 500){throw "Unexpected verification delay"};$script:firewallWaits++}
+function Get-NetFirewallProfile($PolicyStore){
+ if($PolicyStore -ne 'ActiveStore'){throw 'Expected effective profile store'}
+ $script:firewallReads++
+ return $script:profiles | ForEach-Object {
+  $state=if($_.Name -eq $script:forcedFirewallProfile -and ($script:forceUntil -eq 0 -or $script:firewallReads -le $script:forceUntil)){$true}else{$_.Enabled}
+  [pscustomobject]@{Name=$_.Name;Enabled=$state}
+ }
+}
 $script:realtime=$true;$script:blocked=$false
 foreach($group in @('admin','firewall','smartscreen')){foreach($mode in @('query','apply','defaults')){
  $s=[IO.File]::ReadAllText((Join-Path $folder ($mode+'-'+$group+'.ps1')))
@@ -25,6 +33,21 @@ foreach($group in @('admin','firewall','smartscreen')){foreach($mode in @('query
  if($group -eq 'smartscreen' -and $mode -eq 'defaults' -and ($script:registry.ContainsKey('HKLM:\SOFTWARE\Policies\Microsoft\Windows\System|EnableSmartScreen') -or $script:registry['HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer|SmartScreenEnabled'] -ne 'Warn')){throw 'SmartScreen standard not restored'}
  Write-Output ('Mock passed: '+$mode+' '+$group)
 }}
+$script:forcedFirewallProfile='Public'
+$script:firewallReads=0;$script:firewallWrites=0;$script:firewallWaits=0;$script:forceUntil=0
+$firewall=[IO.File]::ReadAllText((Join-Path $folder 'apply-firewall.ps1'))
+try{
+ & ([scriptblock]::Create($firewall)) | Out-Null
+ throw 'Expected policy override to fail'
+}catch{
+ if($_.Exception.Message -notlike 'Действующая политика брандмауэра отличается*'){throw}
+}
+if($script:firewallReads -ne 3 -or $script:firewallWrites -ne 1 -or $script:firewallWaits -ne 2){throw 'Policy override retries must be bounded and read-only'}
+$script:firewallReads=0;$script:firewallWrites=0;$script:firewallWaits=0;$script:forceUntil=2
+$retried=& ([scriptblock]::Create($firewall))
+if('Public=False' -notin $retried -or $script:firewallReads -ne 3 -or $script:firewallWrites -ne 1){throw 'Delayed profile read did not converge'}
+$script:forcedFirewallProfile=$null
+Write-Output 'Mock passed: effective Public policy override rejects local firewall change.'
 Write-Output 'Syntax of all generated Windows PowerShell scripts passed. Mock changes only.'
 # Test the password-policy template with a fake secedit command; never call the real utility.
 $script:passwords=@{MinimumPasswordAge='3';MaximumPasswordAge='20';MinimumPasswordLength='9';PasswordComplexity='1';PasswordHistorySize='4';ClearTextPassword='0';LockoutBadCount='7'}
@@ -37,6 +60,7 @@ function Fake-SecEdit {
 }
 foreach($mode in @('query','apply','defaults')){
  $s=[IO.File]::ReadAllText((Join-Path $folder ($mode+'-passwords.ps1')))
+ if(($mode -eq 'query') -ne $s.Contains('/mergedpolicy')){throw 'Expected effective password-policy export only for verification'}
  $s=$s.Replace("& (Join-Path `$env:windir 'System32\secedit.exe')",'Fake-SecEdit')
  $s=$s.Replace('[IO.Directory]::CreateDirectory($temp,$acl)','[IO.Directory]::CreateDirectory($temp)')
  if($s.Contains('secedit.exe')){throw 'Unmocked secedit reference'}

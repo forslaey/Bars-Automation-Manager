@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Diagnostics;
 using System.Threading;
 namespace ServiceTool
@@ -11,11 +11,12 @@ namespace ServiceTool
         private readonly Action<string> send;
         private readonly Timer timer;
         private readonly Stopwatch elapsed = Stopwatch.StartNew();
-        private string phase = "Подготавливаем установку";
+        private string phase;
         private bool completed;
-        public LibraryHeartbeat(Action<string> callback, int interval)
+        public LibraryHeartbeat(Action<string> callback, int interval, string initialPhase = "Подготавливаем установку")
         {
             send = callback;
+            phase = initialPhase;
             timer = new Timer(delegate { lock (gate) if (!completed) send(phase + ", прошло " + elapsed.Elapsed.ToString(@"hh\:mm\:ss")); }, null, interval, interval);
         }
         public void SetPhase(string text) { lock (gate) { phase = text; if (!completed) send(text); } }

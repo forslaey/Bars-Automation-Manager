@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -68,7 +68,7 @@ namespace ServiceTool
         }
         // Read both pipes concurrently: DISM/PowerShell cannot deadlock on a full error pipe.
         // Windows servicing is allowed to finish; killing TrustedInstaller is never attempted.
-        internal static LibraryInstallResult Run(string script, Action<string> progress, bool cancellableRead=false)
+        internal static LibraryInstallResult Run(string script, Action<string> progress, bool cancellableRead=false, string workingMessage="Windows обрабатывает запрос. Дождись завершения…")
         {
             // Only a small bootstrap goes on the command line. The real script
             // travels as ASCII base64 on stdin, without a temporary script file.
@@ -96,7 +96,7 @@ namespace ServiceTool
                         try{process.Kill();}catch(InvalidOperationException){}
                         process.WaitForExit();throw new OperationCanceledException("Проверка настроек отменена");
                     }
-                    if(!cancellableRead)progress("Windows обрабатывает запрос. Дождись завершения…");
+                    if(!cancellableRead)progress(workingMessage);
                 }
                 if(cancellableRead)LibraryCancellation.Check();
                 string text = output.GetAwaiter().GetResult(), error = errors.GetAwaiter().GetResult();

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -42,6 +42,13 @@ namespace ServiceTool
             new Policy("ClearTextPassword","Хранить с обратимым шифрованием",0,0)
         };
         internal static string Value(int? value){return value.HasValue?value.Value.ToString():"Не определено";}
+        internal static string OperationPhase(string data)
+        {
+            return (data ?? "").StartsWith("query:", StringComparison.Ordinal)
+                ? "Проверяем настройки Windows"
+                : "Применяем настройки Windows";
+        }
+
         internal static string Script(string operation,string group,bool sharedMetadata = false)
         {
             if(operation!="query"&&operation!="apply"&&operation!="defaults")throw new InvalidDataException("Неизвестная операция настроек");
@@ -78,9 +85,27 @@ $policy='HKLM:\SOFTWARE\Policies\Microsoft\Windows\System';$explorer='HKLM:\SOFT
             }
             else if(group=="firewall")
             {
-                if(!query)s.AppendLine("Set-NetFirewallProfile -Profile Domain,Private,Public -Enabled "+(defaults?"True":"False")+" -PolicyStore PersistentStore;");
-                s.AppendLine("$profiles=@(Get-NetFirewallProfile -PolicyStore ActiveStore);if($profiles.Count -ne 3){throw 'Windows не вернула все три профиля брандмауэра'};foreach($p in $profiles){$p.Name+'='+$p.Enabled}");
-                if(!query)s.AppendLine("if(@($profiles | Where-Object {[string]$_.Enabled -ne '"+(defaults?"True":"False")+"'}).Count -gt 0){throw 'Действующая политика брандмауэра отличается от запрошенной. Проверь GPO/MDM'}");
+                s.AppendLine(@"function ReadFirewallProfiles {
+ $items=@(Get-NetFirewallProfile -PolicyStore ActiveStore)
+ if($items.Count -ne 3 -or @('Domain','Private','Public' | Where-Object { $items.Name -notcontains $_ }).Count){
+  throw 'Windows не вернула все три профиля брандмауэра'
+ }
+ return $items
+}");
+                if (query) s.AppendLine("$profiles=@(ReadFirewallProfiles);");
+                else
+                {
+                    string expected = defaults ? "True" : "False";
+                    s.AppendLine("Set-NetFirewallProfile -Profile Domain,Private,Public -Enabled "+expected+" -PolicyStore PersistentStore;");
+                    s.AppendLine("$expected='"+expected+"';");
+                    s.AppendLine(@"for($attempt=0;$attempt -lt 3;$attempt++){
+ if($attempt -gt 0){Start-Sleep -Milliseconds 500}
+ try{$profiles=@(ReadFirewallProfiles)}catch{if($attempt -eq 2){throw};continue}
+ if(@($profiles | Where-Object {[string]$_.Enabled -ne $expected}).Count -eq 0){break}
+}
+if(@($profiles | Where-Object {[string]$_.Enabled -ne $expected}).Count){throw 'Действующая политика брандмауэра отличается от запрошенной. Проверь GPO/MDM'}");
+                }
+                s.AppendLine("foreach($p in $profiles){$p.Name+'='+$p.Enabled}");
             }
             else if(group=="admin")
             {
@@ -99,7 +124,7 @@ $policy='HKLM:\SOFTWARE\Policies\Microsoft\Windows\System';$explorer='HKLM:\SOFT
                 if(!query)s.AppendLine("if($computer.DomainRole -ge 4){throw 'На контроллере домена локальный профиль паролей не применяется. Используй доменную политику'};");
                 s.AppendLine(@"$temp=Join-Path $env:TEMP ('bars-policy-'+[guid]::NewGuid().ToString('N'));$acl=New-Object System.Security.AccessControl.DirectorySecurity; $acl.SetAccessRuleProtection($true,$false);foreach($sid in @('S-1-5-18','S-1-5-32-544')){$identity=New-Object System.Security.Principal.SecurityIdentifier($sid);$rule=New-Object System.Security.AccessControl.FileSystemAccessRule($identity,'FullControl','ContainerInherit,ObjectInherit','None','Allow');$acl.AddAccessRule($rule)};[IO.Directory]::CreateDirectory($temp,$acl)|Out-Null;
 try {
-$export=Join-Path $temp 'export.inf'; & (Join-Path $env:windir 'System32\secedit.exe') /export /cfg $export /areas SECURITYPOLICY /quiet | Out-Null;if($LASTEXITCODE -ne 0){throw ('Не удалось прочитать политики: '+$LASTEXITCODE)};
+$export=Join-Path $temp 'export.inf'; & (Join-Path $env:windir 'System32\secedit.exe') /export " + (query ? "/mergedpolicy " : "") + @" /cfg $export /areas SECURITYPOLICY /quiet | Out-Null;if($LASTEXITCODE -ne 0){throw ('Не удалось прочитать политики: '+$LASTEXITCODE)};
 function ReadPolicies($file){$values=@{};$section='';foreach($line in Get-Content -LiteralPath $file){if($line -match '^\[(.+)\]'){$section=$matches[1]}elseif($section -eq 'System Access' -and $line -match '^\s*(\w+)\s*=\s*(.+)$'){$values[$matches[1]]=$matches[2].Trim()}};return $values};$before=ReadPolicies $export;
 ");
                 if(!query)
@@ -131,7 +156,7 @@ function ReadPolicies($file){$values=@{};$section='';foreach($line in Get-Conten
             }
             return query.ToString();
         }
-        private static LibraryInstallResult RunScript(string script,Action<string> progress,bool cancellableRead=false){const string marker="BARS_SETTINGS_ERROR=";var result=WindowsComponents.Run("$ProgressPreference='SilentlyContinue';try{"+script+"}catch{[Console]::WriteLine('"+marker+"'+$_.Exception.Message)}",progress,cancellableRead);int error=result.Message.IndexOf(marker,StringComparison.Ordinal);if(error>=0)throw new InvalidOperationException(result.Message.Substring(error+marker.Length).Trim());return result;}
+        private static LibraryInstallResult RunScript(string script,Action<string> progress,string phase,bool cancellableRead=false){const string marker="BARS_SETTINGS_ERROR=";var result=WindowsComponents.Run("$ProgressPreference='SilentlyContinue';try{"+script+"}catch{[Console]::WriteLine('"+marker+"'+$_.Exception.Message)}",progress,cancellableRead,phase);int error=result.Message.IndexOf(marker,StringComparison.Ordinal);if(error>=0)throw new InvalidOperationException(result.Message.Substring(error+marker.Length).Trim());return result;}
         internal static LibraryInstallResult Run(string data,Action<string> progress)
         {
             var parts=(data??"").Split(':');if(parts.Length!=2)throw new InvalidDataException("Неверный запрос настроек");
@@ -140,7 +165,7 @@ function ReadPolicies($file){$values=@{};$section='';foreach($line in Get-Conten
             {
                 bool profile = parts[1] == "all-profile";
                 var clock = System.Diagnostics.Stopwatch.StartNew();
-                var result=RunScript(QueryScript(profile),progress,true);
+                var result=RunScript(QueryScript(profile),progress,OperationPhase(data),true);
                 if (profile) result.Message += Environment.NewLine + "BARS_PROFILE.powershell=" + clock.ElapsedMilliseconds;
                 clock.Restart();
                 try{result.Message+=Environment.NewLine+KioskTouchSettings.Run("query",null).Message;}
@@ -148,7 +173,7 @@ function ReadPolicies($file){$values=@{};$section='';foreach($line in Get-Conten
                 if (profile) result.Message += Environment.NewLine + "BARS_PROFILE.kiosk=" + clock.ElapsedMilliseconds;
                 return result;
             }
-            return RunScript(Script(parts[0],parts[1]),progress);
+            return RunScript(Script(parts[0],parts[1]),progress,OperationPhase(data));
         }
     }
 }

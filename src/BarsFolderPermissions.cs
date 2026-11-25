@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 namespace ServiceTool
 {
     internal static class BarsFolderPermissions
@@ -48,7 +48,7 @@ function GrantBarsFolder($root){
  'Папка: '+$root+'; права подтверждены: '+$changed+'; ошибок / ограничений: '+$failed+'; ссылок пропущено: '+$skipped;
  return $failed
 }
-'Count='+$roots.Count;$rootIndex=0;$auditChecked=0;$auditRestricted=0;
+'Count='+$roots.Count;$rootIndex=0;$auditChecked=0;$auditRestricted=0;$auditNotes=0;
 foreach($root in $roots){'Папка: '+$root;
 'Root.'+$rootIndex+'='+$root;$rootIndex++;
 " + (apply ? @"
@@ -59,12 +59,12 @@ foreach($root in $roots){'Папка: '+$root;
   $path=$pending.Pop();$item=$null;
   try{
    $item=Get-Item -LiteralPath $path -Force;
-   if(($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){$auditSkipped++;continue}
+   if(($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){$auditSkipped++;if($auditNotes -lt 10){'Issue.'+$auditNotes+'=Пропущена ссылка: '+$path;$auditNotes++};continue}
    $acl=Get-Acl -LiteralPath $path;$rules=$acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]);$ok=$true;
    foreach($id in @('S-1-5-32-545','S-1-5-32-544','S-1-5-18')){
     if(-not @($rules|Where-Object {$_.IdentityReference.Value -eq $id -and $_.AccessControlType -eq 'Allow' -and (($_.FileSystemRights -band [Security.AccessControl.FileSystemRights]::FullControl) -eq [Security.AccessControl.FileSystemRights]::FullControl) -and (($_.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0)}).Count){$ok=$false}
    }
-   if(@($rules|Where-Object {$_.AccessControlType -eq 'Deny'}).Count){$ok=$false};$auditChecked++;if(-not $ok){$auditRestricted++}
+   if(@($rules|Where-Object {$_.AccessControlType -eq 'Deny'}).Count){$ok=$false};$auditChecked++;if(-not $ok){$auditRestricted++;if($auditNotes -lt 10){'Issue.'+$auditNotes+'=Полный доступ не подтверждён: '+$path;$auditNotes++}}
   }catch{$auditErrors++}
   if($item -and $item.PSIsContainer -and (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0)){
    try{foreach($child in Get-ChildItem -LiteralPath $path -Force -ErrorAction Stop){$pending.Push($child.FullName)}}catch{$auditErrors++}

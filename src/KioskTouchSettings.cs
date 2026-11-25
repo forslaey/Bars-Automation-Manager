@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -150,10 +150,20 @@ namespace ServiceTool
             {
                 var target=restore?original[i]:Entry.Dword(Desired[i]);
                 if(!Same(before[i],target)){store.Write(Paths[i],Names[i],target);changed=true;}
-                if(!Same(store.Read(Paths[i],Names[i]),target))throw new IOException("Режим КСО: Windows не подтвердила запись. Сохранённые прежние настройки оставлены для восстановления.");
+                VerifyStored(store, i, target);
+            }
+            for (int i = 0; i < 2; i++)
+            {
+                var target = restore ? original[i] : Entry.Dword(Desired[i]);
+                VerifyStored(store, i, target);
             }
             if(restore){store.Write(BackupPath,BackupName,Entry.Missing());if(store.Read(BackupPath,BackupName).Exists)throw new IOException("Режим КСО: прежние значения восстановлены, но сохранённую копию не удалось закрыть. Повтори восстановление.");}
             return changed;
+        }
+        private static void VerifyStored(Store store, int index, Entry target)
+        {
+            if (!Same(store.Read(Paths[index],Names[index]), target))
+                throw new IOException("Режим КСО: Windows не подтвердила запись. Сохранённые прежние настройки оставлены для восстановления.");
         }
         internal static LibraryInstallResult Run(string operation,Action<string> progress)
         {

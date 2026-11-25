@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.ComponentModel;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -267,7 +267,8 @@ namespace ServiceTool
                         Action<string> progress = text => { if (Volatile.Read(ref connected) == 1) try { Send(pipe, "progress", "", text, "", ""); } catch (IOException) { Interlocked.Exchange(ref connected, 0); } catch (TimeoutException) { Interlocked.Exchange(ref connected, 0); } };
                         LibraryCancellation.Current = () => cancel.WaitOne(0) || owner.HasExited || Volatile.Read(ref connected) == 0;
                         LibraryInstallResult result;
-                        using (var heartbeat = new LibraryHeartbeat(progress, 1000))
+                        using (var heartbeat = new LibraryHeartbeat(progress, 1000, request[0] == "initial-settings"
+                            ? InitialSystemSettings.OperationPhase(request[1]) : "Подготавливаем установку"))
                         {
                             try { result = system ? ManagerSystemActions.Execute(request[0], request[1], request[2], heartbeat.SetPhase) : InstallVerified(package, request[2], pipeName.Substring(13), heartbeat.SetPhase, () => Volatile.Read(ref connected) == 1, operation); }
                             catch (Exception ex)

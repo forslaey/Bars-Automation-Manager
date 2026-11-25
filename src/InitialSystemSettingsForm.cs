@@ -78,8 +78,10 @@ namespace ServiceTool
                     int height = actions.Controls.Cast<Control>().Max(button =>
                     {
                         int width = Math.Max(1, button.Width - 16);
-                        return TextRenderer.MeasureText(button.Text, button.Font, new Size(width, Int32.MaxValue),
-                            TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix).Height + 8;
+                        IEnumerable<string> captions = button == applyButton ? Settings.Select(setting => setting[3]) :
+                            button == standardButton ? Settings.Select(setting => setting[4]) : new[] { button.Text };
+                        return captions.Max(caption => TextRenderer.MeasureText(caption, button.Font, new Size(width, Int32.MaxValue),
+                            TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix).Height) + 8;
                     });
                     int requested = Math.Max(66, height + actions.Margin.Vertical);
                     if (Math.Abs(Body.RowStyles[2].Height - requested) <= 1) return;
@@ -88,7 +90,7 @@ namespace ServiceTool
                 });
             };
             actions.SizeChanged += delegate { fitActions(); };
-            foreach (Control button in actions.Controls) button.TextChanged += delegate { fitActions(); };
+            foreach (Control button in actions.Controls) button.FontChanged += delegate { fitActions(); };
             Shown += delegate { fitActions(); };
             grid.SelectionChanged+=delegate{UpdateButtons();};grid.CurrentCellChanged+=delegate{UpdateButtons();};SetTheme(Colors.Dark,false);UpdateButtons();
             Shown+=async delegate{if(preview){foreach(DataGridViewRow row in grid.Rows)row.Cells[2].Value="Не проверено · демонстрация";}else await Check();};
@@ -123,7 +125,6 @@ namespace ServiceTool
         }
         private void Lock(bool value){if(value)CancelRequested=false;if(value&&!Scanning)OperationView.BeginOperation("Применяем настройки…");else if(!value&&(OperationView.Snapshot.Active||Scanning))OperationView.FinishOperation(CancelRequested?"Проверка отменена.":Activity.Text,cancelled:CancelRequested);Busy=value;Back.Enabled=!value||Scanning||ManagerApplicationContext.ActiveContext!=null;refresh.Enabled=!value;UpdateButtons();}
         protected override bool UseHelperProgress { get { return !Scanning; } }
-        protected override void Progress(string text){base.Progress("Применяем настройки Windows…");}
         private void Log(string text){journal.AppendText(DateTime.Now.ToString("HH:mm:ss")+"  "+OperationMessage.FinishSentence(text)+Environment.NewLine);journal.SelectionStart=journal.TextLength;journal.ScrollToCaret();}
         private void ShowState(string text)
         {
@@ -243,7 +244,52 @@ namespace ServiceTool
             if(group=="firewall"||group=="smartscreen")warning+="\r\nОперация меняет защиту Windows. Действующие политики организации могут ограничить изменение.";
             if(BrandMessageBox.Show(this,warning,Text,MessageBoxButtons.YesNo,MessageBoxIcon.Warning,MessageBoxDefaultButton.Button2)!=DialogResult.Yes)return;
             Lock(true);bool offer=false;
-            try{Log(Settings.First(s=>s[0]==group)[1]+": "+(defaults?(group=="kiosk"?"восстанавливаем прежние настройки…":"возвращаем стандартные настройки…"):"применяем выбранные настройки…"));var results=await ExecuteAll(new[]{new[]{"initial-settings",(defaults?"defaults:":"apply:")+group,""},new[]{"initial-settings","query:all",""}},result=>{if(group=="kiosk"&&result.Reboot)offer=true;});var first=results.First();offer=LibraryPlan.Success(first.ExitCode)&&(group=="admin"||group=="passwords"||(group=="kiosk"&&first.Reboot));Log(LibraryPlan.Success(first.ExitCode)?"Настройки сохранены. Проверяем результат…":"Настройки применены не полностью. "+SystemSettingsPresentation.Error(first.Message));if(results.Count>1)ShowState(results.Last().Message);Activity.Text=LibraryPlan.Success(first.ExitCode)?"Операция завершена.":"Не выполнено полностью — проверь журнал.";bool confirmed=LibraryPlan.Success(first.ExitCode)&&LibraryPlan.Success(results.Last().ExitCode)&&!WindowsComponents.Parse(results.Last().Message).ContainsKey(group+".Error");if(!confirmed)Activity.Text="Результат не подтверждён полностью — проверь журнал.";OperationView.FinishOperation(Activity.Text,success:confirmed,failed:!confirmed);}
+            try
+            {
+                Log(Settings.First(s=>s[0]==group)[1]+": "+(defaults?(group=="kiosk"?"восстанавливаем прежние настройки…":"возвращаем стандартные настройки…"):"применяем выбранные настройки…"));
+                var steps = new List<string[]>();
+                if (group == "firewall") steps.Add(new[] { "initial-settings", "query:firewall", "" });
+                steps.Add(new[] { "initial-settings", (defaults ? "defaults:" : "apply:") + group, "" });
+                steps.Add(new[] { "initial-settings", "query:all", "" });
+                var results = await ExecuteAll(steps);
+                if (group == "firewall")
+                {
+                    var before = results[0];
+                    var profiles = WindowsComponents.Parse(before.Message);
+                    var snapshot = profiles.ToDictionary(pair => "firewall." + pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+                    Log("Брандмауэр до изменения: " + (LibraryPlan.Success(before.ExitCode)
+                        ? SystemSettingsPresentation.Status("firewall", snapshot).Replace("\n", ", ")
+                        : "не удалось прочитать состояние"));
+                }
+                var first = results[results.Count-2];
+                var verification = results.Last();
+                bool applied = LibraryPlan.Success(first.ExitCode);
+                bool checkedState = LibraryPlan.Success(verification.ExitCode);
+                offer = applied && first.Reboot;
+                var values = WindowsComponents.Parse(verification.Message);
+                bool confirmed = applied && checkedState && !values.ContainsKey(group + ".Error");
+                if (!applied) Log("Настройки применены не полностью. " + SystemSettingsPresentation.Error(first.Message));
+                if (checkedState) ShowState(verification.Message);
+                else
+                {
+                    DataGridViewRow row = grid.Rows.Cast<DataGridViewRow>().First(item => Convert.ToString(item.Tag) == group);
+                    row.Cells[2].Value = "Проверка не выполнена";
+                    row.Cells[2].ToolTipText = "";
+                    Log("Не удалось перепроверить настройки. " + SystemSettingsPresentation.Error(verification.Message));
+                }
+                if (checkedState && (applied || group == "firewall"))
+                {
+                    var issues = SystemSettingsPresentation.Unconfirmed(group, defaults,
+                        WindowsComponents.Parse(first.Message), values).ToArray();
+                    foreach (string issue in issues) Log(issue);
+                    confirmed &= issues.Length == 0;
+                }
+                Activity.Text = confirmed ? "Настройки подтверждены." : "Результат не подтверждён полностью — проверь журнал.";
+                if (confirmed && offer) Activity.Text = "Настройки записаны. Требуется перезагрузка.";
+                if (confirmed && group == "kiosk" && !defaults)
+                    Activity.Text = "Настройки КСО записаны. Проверь жесты на КСО" + (offer ? " после перезагрузки." : ".");
+                OperationView.FinishOperation(Activity.Text, success:confirmed, failed:!confirmed);
+            }
             catch(Exception ex){Log("Операция не подтверждена. "+SystemSettingsPresentation.Error(ex.Message));Activity.Text="Не выполнено полностью — проверь журнал.";OperationView.FinishOperation(Activity.Text,failed:true);}
             finally{Lock(false);}
             if(offer)Log("Для завершения изменений потребуется перезагрузка Windows.");

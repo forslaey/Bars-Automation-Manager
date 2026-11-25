@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 namespace ServiceTool
@@ -31,19 +31,85 @@ namespace ServiceTool
             }
             if(group=="folders")
             {
-                int count,checkedCount,limited,errors,skipped;
+                int count,limited;
                 if(!Int32.TryParse(Get(values,"folders.Count"),out count))return "Не удалось проверить права\nПодробности в журнале";
                 if(count==0)return (Get(values,"folders.Errors")!="0"?"Не удалось проверить все диски":Get(values,"folders.Skipped")!="0"?"Найденные папки не поддерживают проверку прав":"Папки DataKrat и Bars не найдены")+"\nПодробности в журнале";
-                bool known=Int32.TryParse(Get(values,"folders.Checked"),out checkedCount)&Int32.TryParse(Get(values,"folders.Restricted"),out limited)&Int32.TryParse(Get(values,"folders.Errors"),out errors)&Int32.TryParse(Get(values,"folders.Skipped"),out skipped);
-                return (known&&checkedCount>0&&limited==0&&errors==0&&skipped==0?"Полные права на папки выданы":known&&limited>0?"Полные права выданы не на всё содержимое":"Полный доступ подтверждён не для всех объектов")+"\nПодробности в журнале";
+                bool known=Int32.TryParse(Get(values,"folders.Restricted"),out limited);
+                return (FolderAccessConfirmed(values)?"Полные права на папки выданы":known&&limited>0?"Полные права выданы не на всё содержимое":"Полный доступ подтверждён не для всех объектов")+"\nПодробности в журнале";
             }
             return "Не проверено";
+        }
+        private static readonly string[] FirewallProfiles = { "Domain", "Private", "Public" };
+        internal static bool FirewallMatches(IDictionary<string,string> values, bool enabled)
+        {
+            if (values.ContainsKey("firewall.Error")) return false;
+            string expected = enabled ? "включено" : "отключено";
+            return FirewallProfiles.All(profile => Enabled(Get(values, "firewall." + profile)) == expected);
+        }
+
+        internal static IEnumerable<string> Unconfirmed(string group, bool defaults,
+            IDictionary<string,string> applied, IDictionary<string,string> current)
+        {
+            if (current.ContainsKey(group + ".Error")) yield break;
+            switch (group)
+            {
+                case "firewall":
+                    if (!FirewallMatches(current, defaults))
+                        yield return "Брандмауэр: ожидалось " + (defaults ? "включение" : "отключение") +
+                            " всех профилей. " + Status(group, current).Replace("\n", ", ") + ". Проверь политики организации.";
+                    break;
+                case "admin":
+                case "passwords":
+                    bool admin = group == "admin";
+                    foreach (var policy in admin ? InitialSystemSettings.AdminPolicies : InitialSystemSettings.PasswordPolicies)
+                    {
+                        string expected = admin ? InitialSystemSettings.Value(defaults ? policy.Default : policy.Bars) : Get(applied, policy.Name);
+                        string actual = Get(current, group + "." + policy.Name);
+                        if (policy.Modern && actual == "Недоступно в этой Windows" && Get(applied, policy.Name) == actual) continue;
+                        if (policy.Name == "MaximumPasswordAge")
+                        {
+                            if (expected == "-1") expected = "0";
+                            if (actual == "-1") actual = "0";
+                        }
+                        if (expected.Length == 0 || actual != expected)
+                            yield return policy.Title + ": ожидалось «" + (expected.Length == 0 ? "неизвестно" : expected) +
+                                "», проверка показала «" + (actual.Length == 0 ? "не удалось прочитать" : actual) + "».";
+                    }
+                    break;
+                case "smartscreen":
+                    if (Get(current, "smartscreen.Local") != (defaults ? "Warn" : "Off") ||
+                        Get(current, "smartscreen.Policy") != (defaults ? "Не определено" : "0"))
+                        yield return "SmartScreen: повторная проверка не подтвердила выбранный режим. " + Status(group, current);
+                    break;
+                case "folders":
+                    if (!FolderAccessConfirmed(current))
+                        yield return "Полный доступ подтверждён не для всех объектов. Проверь счётчики и пути в журнале.";
+                    break;
+                case "kiosk":
+                    string configured = Get(current, "kiosk.Configured");
+                    string backup = Get(current, "kiosk.Backup");
+                    string support = Get(current, "kiosk.Support");
+                    if (defaults ? (configured != "0" && configured != "1") || configured != Get(applied, "kiosk.Configured") ||
+                        backup != "0" || Get(current, "kiosk.BackupState") != "Нет" :
+                        configured != "1" || backup != "1" || (support != "Supported" && support != "Unconfirmed"))
+                        yield return "Режим КСО: повторная проверка не подтвердила сохранение нужных параметров.";
+                    break;
+            }
+        }
+
+        internal static bool FolderAccessConfirmed(IDictionary<string,string> values)
+        {
+            int roots, checkedCount;
+            return Int32.TryParse(Get(values, "folders.Count"), out roots) && roots > 0 &&
+                Int32.TryParse(Get(values, "folders.Checked"), out checkedCount) && checkedCount >= roots &&
+                Get(values, "folders.Restricted") == "0" && Get(values, "folders.Errors") == "0" &&
+                Get(values, "folders.Skipped") == "0";
         }
         private static string Capital(string value){return Char.ToUpper(value[0])+value.Substring(1);}
         internal static string Error(string text)
         {
             text=text??"";
-            if(text.StartsWith("Режим КСО",StringComparison.Ordinal))return text;
+            if(text.StartsWith("Режим КСО",StringComparison.Ordinal) || text.StartsWith("Действующая политика брандмауэра",StringComparison.Ordinal))return text;
             if(text.IndexOf("недоступ",StringComparison.OrdinalIgnoreCase)>=0||text.IndexOf("not recognized",StringComparison.OrdinalIgnoreCase)>=0)return "Эта функция недоступна в текущей конфигурации Windows.";
             if(text.IndexOf("denied",StringComparison.OrdinalIgnoreCase)>=0||text.IndexOf("доступ",StringComparison.OrdinalIgnoreCase)>=0)return "Windows не предоставила доступ к настройке. Проверь права администратора и ограничения организации.";
             if(text.IndexOf("Defender",StringComparison.OrdinalIgnoreCase)>=0)return "Защитник Windows не подтвердил изменение. Возможны ограничения политики или защита от изменений.";
@@ -68,6 +134,7 @@ namespace ServiceTool
             if(group=="folders")
             {
                 foreach(var item in values.Where(p=>p.Key.StartsWith("folders.Root.",StringComparison.Ordinal)))yield return "Проверена папка: "+item.Value;
+                foreach(var item in values.Where(p=>p.Key.StartsWith("folders.Issue.",StringComparison.Ordinal)))yield return item.Value;
                 if(values.ContainsKey("folders.Checked"))yield return "Проверено объектов: "+Get(values,"folders.Checked")+"; с ограничениями: "+Get(values,"folders.Restricted")+"; не удалось проверить: "+Get(values,"folders.Errors")+"; пропущено ссылок и неподдерживаемых папок: "+Get(values,"folders.Skipped");
             }
         }
