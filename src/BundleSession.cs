@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -9,21 +9,114 @@ namespace ServiceTool
     {
         static readonly object gate=new object();
         static string PathIn(string root,string name){return YandexBundleSource.LocalPath(root,"/.bars-download/"+name);}
-        internal static void Cleanup(string root)
+        internal static string StateFolder(string root)
+        {
+            string full = Path.GetFullPath(root);
+            string path = full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).ToUpperInvariant();
+            using (var hash = System.Security.Cryptography.SHA256.Create())
+            {
+                string key = BitConverter.ToString(hash.ComputeHash(System.Text.Encoding.UTF8.GetBytes(path))).Replace("-", "");
+                return Path.Combine(ApplicationStorage.DirectoryPath, "BundleTransfers", key);
+            }
+        }
+
+        internal static IDisposable Begin(string root, Action<string> report)
+        {
+            root = Path.GetFullPath(root);
+            string state = StateFolder(root);
+            Directory.CreateDirectory(state);
+            var handle = new FileStream(Path.Combine(state, "active.lock"), FileMode.OpenOrCreate,
+                FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose);
+            return new TransferSession(root, report, handle);
+        }
+
+        internal static void CleanIdle(string root, Action<string> report)
+        {
+            try
+            {
+                if (String.IsNullOrWhiteSpace(root) || !Path.IsPathRooted(root)) return;
+                if (!Directory.Exists(Path.GetDirectoryName(PathIn(root, "placeholder")))) return;
+                using (Begin(root, report)) { }
+            }
+            catch (IOException e) { if (report != null) report("Очистка временной папки отложена. " + e.Message); }
+            catch (UnauthorizedAccessException e) { if (report != null) report("Очистка временной папки отложена. " + e.Message); }
+            catch (ArgumentException e) { if (report != null) report("Проверь путь к комплекту. " + e.Message); }
+            catch (InvalidDataException e) { if (report != null) report("Проверь путь к комплекту. " + e.Message); }
+        }
+
+        private sealed class TransferSession : IDisposable
+        {
+            private readonly string root;
+            private readonly Action<string> report;
+            private FileStream handle;
+
+            internal TransferSession(string root, Action<string> report, FileStream handle)
+            {
+                this.root = root;
+                this.report = report;
+                this.handle = handle;
+            }
+
+            public void Dispose()
+            {
+                if (handle == null) return;
+                try { Cleanup(root, report); }
+                catch (IOException e) { if (report != null) report("Не удалось убрать временную папку. " + e.Message); }
+                catch (UnauthorizedAccessException e) { if (report != null) report("Не удалось убрать временную папку. " + e.Message); }
+                finally { handle.Dispose(); handle = null; }
+            }
+        }
+
+        internal static void Cleanup(string root, Action<string> report = null)
         {
             lock(gate)
             {
                 string folder=Path.GetDirectoryName(PathIn(root,"placeholder"));
-                if(Directory.Exists(folder)) Directory.Delete(folder,true);
+                if (!Directory.Exists(folder)) return;
+                string receipts = Path.Combine(folder, "receipts");
+                if (Directory.Exists(receipts))
+                {
+                    ToolsDeployment.SafePath(receipts);
+                    string saved = Path.Combine(StateFolder(root), "receipts");
+                    Directory.CreateDirectory(saved);
+                    foreach (string file in Directory.EnumerateFiles(receipts, "*.xml"))
+                    {
+                        ToolsDeployment.SafePath(file);
+                        string target = Path.Combine(saved, Path.GetFileName(file));
+                        if (!File.Exists(target)) File.Copy(file, target);
+                    }
+                }
+                // Old releases stored rollback copies alongside partial files. Refuse
+                // to remove any that may be the last copy of a user's package.
+                var pending = new Stack<string>();
+                pending.Push(folder);
+                while (pending.Count != 0)
+                    foreach (string item in Directory.EnumerateFileSystemEntries(pending.Pop()))
+                    {
+                        var attributes = File.GetAttributes(item);
+                        if ((attributes & FileAttributes.ReparsePoint) != 0)
+                            throw new IOException("Временная папка содержит ссылку.");
+                        if ((attributes & FileAttributes.Directory) != 0) pending.Push(item);
+                        else if (item.EndsWith(".bak", StringComparison.OrdinalIgnoreCase) ||
+                                 item.EndsWith(".previous", StringComparison.OrdinalIgnoreCase))
+                        {
+                            string recovery = Path.Combine(StateFolder(root), "recovery");
+                            Directory.CreateDirectory(recovery);
+                            string target = Path.Combine(recovery, Guid.NewGuid().ToString("N") + Path.GetExtension(item));
+                            File.Move(item, target);
+                            if (report != null) report("Резервная копия сохранена: " + target);
+                        }
+                    }
+                Directory.Delete(folder, true);
             }
         }
         internal static void Log(string root,string text)
         {
             lock(gate)
             {
-                try{string path=PathIn(root,"transfer.log");Directory.CreateDirectory(Path.GetDirectoryName(path));
+                try{string path=Path.Combine(StateFolder(root),"transfer.log");Directory.CreateDirectory(Path.GetDirectoryName(path));
                     // Bound diagnostics; do not include temporary download URLs.
-                    if(File.Exists(path)&&new FileInfo(path).Length>2*1024*1024){string previous=PathIn(root,"transfer.previous.log");if(File.Exists(previous))File.Delete(previous);File.Move(path,previous);}
+                    if(File.Exists(path)&&new FileInfo(path).Length>2*1024*1024){string previous=Path.Combine(StateFolder(root),"transfer.previous.log");if(File.Exists(previous))File.Delete(previous);File.Move(path,previous);}
                     File.AppendAllText(path,DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")+" "+text.Replace("\r"," ").Replace("\n"," ")+Environment.NewLine);
                 }catch(IOException){}catch(UnauthorizedAccessException){}
             }

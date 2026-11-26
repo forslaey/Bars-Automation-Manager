@@ -45,6 +45,16 @@ namespace ServiceTool
                 Check(steps.Length == 2 && steps[0].file == "SQLEXPRESS_x64_RUS.exe", "Express installer precedes update");
                 SqlInstallPackages.Save(express, steps);
                 Check(SqlInstallPackages.Read(express).Select(step => step.file).SequenceEqual(steps.Select(step => step.file)), "Manifest order round-trips");
+                string studio = Path.Combine(fixture, "SSMS-fixture");
+                string layout = Path.Combine(studio, "Offline Setup", "SSMS_22");
+                string payload = Path.Combine(layout, "payload");
+                Directory.CreateDirectory(payload);
+                File.WriteAllText(Path.Combine(layout, "Layout.json"), "{}");
+                File.WriteAllText(Path.Combine(layout, "Catalog.json"), "{}");
+                File.WriteAllText(Path.Combine(layout, "vs_SSMS_22.exe"), "inert launcher");
+                File.WriteAllText(Path.Combine(payload, "SSMS-Setup-unrelated.exe"), "inert cached file");
+                Check(SqlInstallPackages.Read(studio).Single().file.EndsWith("SSMS_22/vs_SSMS_22.exe"),
+                    "SSMS discovers the offline launcher and does not descend into the Visual Studio cache");
                 bool rejected = false;
                 try { SqlInstallPackages.Resolve(express, "../other.exe"); } catch (InvalidDataException) { rejected = true; }
                 Check(rejected, "Manifest cannot escape the package");
@@ -236,7 +246,14 @@ namespace ServiceTool
                     Check(grid.Rows.Count==2 && grid.TouchScrollingEnabled, "SQL rows and touch input");
                     var buttons=ControlsUnder(page).OfType<BrandButton>().ToArray();
                     Check(buttons.Length==6 && buttons.All(button=>button.Height>0 && button.Parent.ClientRectangle.Contains(button.Bounds)), "SQL buttons stay within footer panels");
-                    Check(buttons.Where(button=>button.Text!="В меню"&&button.Text!="Закрыть").Select(button=>button.Width).Distinct().Count()==1, "SQL action widths match");
+                    Check(buttons.GroupBy(button=>button.Parent).All(group=>group.Select(button=>button.Height).Distinct().Count()==1), "SQL buttons match heights within each row");
+                    var prepare=buttons.Single(button=>button.Text=="Подготовить свой набор");
+                    var menu=buttons.Single(button=>button.Text=="В меню");
+                    var close=buttons.Single(button=>button.Text=="Закрыть");
+                    Check(prepare.Width > menu.Width && menu.Width == close.Width &&
+                        TextRenderer.MeasureText(prepare.Text, prepare.Font).Width + 16 <= prepare.Width, "Custom set button fits its entire caption on one line");
+                    Check(prepare.Parent==menu.Parent && menu.Parent==close.Parent && prepare.Right<menu.Left && menu.Right<close.Left &&
+                        menu.Left-prepare.Right==close.Left-menu.Right && prepare.Top==menu.Top && menu.Top==close.Top, "Custom set is left of Menu and Close with consistent gaps");
                     Check(grid.Bottom<=page.GetControlFromPosition(0,2).Top,"Table stays above the actions");
                     if(scale==1F)using(var image=new Bitmap(page.Width,page.Height)){
                         page.DrawToBitmap(image,new Rectangle(Point.Empty,image.Size));

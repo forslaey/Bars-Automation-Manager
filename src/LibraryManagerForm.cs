@@ -28,6 +28,7 @@ namespace ServiceTool
         private readonly Font headerFont = new Font("Segoe UI", 10.5F, FontStyle.Bold);
         private readonly bool preview;
         private bool checking, installing, stopRequested, binding, firstScan = true, useFocusedRow;
+        private bool explicitSelection;
         private string source, sourceError;
         private LibraryJournal operationJournal;
         private bool journalWriteFailed;
@@ -234,6 +235,7 @@ namespace ServiceTool
             {
                 if (binding || e.RowIndex < 0 || e.ColumnIndex != 0 || e.RowIndex >= grid.Rows.Count) return;
                 var package = grid.Rows[e.RowIndex].Tag as LibraryPackage; if (package == null) return;
+                explicitSelection = true;
                 if (Convert.ToBoolean(grid.Rows[e.RowIndex].Cells[0].Value)) selection.Add(package.Id); else selection.Remove(package.Id); UpdateSummary();
             };
             grid.CellPainting += delegate(object sender, DataGridViewCellPaintingEventArgs e)
@@ -295,25 +297,26 @@ namespace ServiceTool
         }
         private void SelectMissing()
         {
-            useFocusedRow = false; selection.Clear(); foreach (LibraryCheck check in VisibleChecks) if (check.Package.Recommended && LibraryVersions.NeedsInstall(check)) selection.Add(check.Package.Id);
+            useFocusedRow = false; explicitSelection = false; selection.Clear(); foreach (LibraryCheck check in VisibleChecks) if (check.Package.Recommended && LibraryVersions.NeedsInstall(check)) selection.Add(check.Package.Id);
         }
         private void ToggleAll()
         {
             if (binding || checking || installing) return;
             var available = VisibleChecks.Where(c => c.State != LibraryState.NotApplicable).ToList();
             bool clear = available.Count > 0 && available.All(c => selection.Contains(c.Package.Id));
-            useFocusedRow = false; selection.Clear();
+            useFocusedRow = false; explicitSelection = true; selection.Clear();
             if (!clear) foreach (var check in available) selection.Add(check.Package.Id);
             RenderRows();
         }
         private List<LibraryCheck> ActionTargets()
         {
-            if (useFocusedRow && grid.CurrentRow != null)
+            var marked = VisibleChecks.Where(c => selection.Contains(c.Package.Id)).ToList();
+            if ((!explicitSelection || marked.Count == 0) && useFocusedRow && grid.CurrentRow != null)
             {
                 var package = grid.CurrentRow.Tag as LibraryPackage; LibraryCheck check;
                 if (package != null && checks.TryGetValue(package.Id, out check)) return new List<LibraryCheck> { check };
             }
-            return VisibleChecks.Where(c => selection.Contains(c.Package.Id)).ToList();
+            return marked;
         }
         private void UpdateAction()
         {
@@ -322,7 +325,8 @@ namespace ServiceTool
             var available = VisibleChecks.Where(c => c.State != LibraryState.NotApplicable).ToList();
             selectAll.Text = available.Count > 0 && available.All(c => selection.Contains(c.Package.Id)) ? "Снять выбор" : "Выбрать всё";
             selectAll.Enabled = !checking && !installing && available.Count > 0;
-            install.AccessibleDescription = useFocusedRow ? "Действие для выделенной строки" : "Действие для отмеченных компонентов";
+            install.AccessibleDescription = useFocusedRow && (!explicitSelection || !available.Any(c => selection.Contains(c.Package.Id)))
+                ? "Действие для выделенной строки" : "Действие для отмеченных компонентов";
         }
         private void UpdateSummary()
         {
@@ -400,13 +404,17 @@ namespace ServiceTool
             grid.EndEdit();
             List<LibraryCheck> targets = ActionTargets();
             if (targets.Count == 0) { activity.Text = "Выбери строку или отметь компоненты в первом столбце"; return; }
-            if (targets.All(c => c.State == LibraryState.Unknown || c.State == LibraryState.NotApplicable) && !targets.Any(LibraryVersions.CanRemove))
+            if (targets.All(c => c.State == LibraryState.NotApplicable))
             { await RefreshAsync(false); return; }
             LibraryOperation operation = targets.Any(c => c.Relation == LibraryRelation.Older) ? LibraryOperation.Update : LibraryOperation.Install;
-            if (targets.Any(LibraryVersions.CanRemove))
+            if (targets.Any(LibraryVersions.OpensActionDialog))
             {
                 using (var dialog = new LibraryActionDialog(Colors, Icon, targets))
-                { if (await ModuleNavigation.ShowOwnedAsync(this, dialog) != DialogResult.OK) return; operation = dialog.Operation; }
+                {
+                    if (await ModuleNavigation.ShowOwnedAsync(this, dialog) != DialogResult.OK) return;
+                    if (dialog.CheckAgain) { await RefreshAsync(false); return; }
+                    operation = dialog.Operation;
+                }
                 if (operation == LibraryOperation.Reinstall && targets.Any(c => c.Relation == LibraryRelation.Newer || c.HasNewerParts))
                 { activity.Text = "Обнови файлы установщиков: переустановка более старой версией заблокирована"; return; }
             }
@@ -447,8 +455,12 @@ namespace ServiceTool
                     if (operation == LibraryOperation.Remove && !LibraryVersions.CanRemove(state)) { Log(package.Name + ": удаление не выполнялось — подходящий установленный компонент для удаления не найден. " + state.Detail); continue; }
                     if (state.State == LibraryState.Installed && (operation == LibraryOperation.Install || operation == LibraryOperation.Update || state.Relation == LibraryRelation.Newer || !targetIds.Contains(package.Id))) { Log(package.Name + ": установка не требуется — подходящая или более новая версия уже есть в системе. " + state.Detail); continue; }
                     if (state.State == LibraryState.NotApplicable) throw new InvalidOperationException(package.Name + ": " + state.Detail);
-                    if (state.State == LibraryState.Unknown && (operation == LibraryOperation.Install || operation == LibraryOperation.Update))
-                        throw new InvalidOperationException(package.Name + ": нужна проверка. " + state.Detail);
+                    if (state.State == LibraryState.Unknown && (operation == LibraryOperation.Install || operation == LibraryOperation.Update ||
+                        operation == LibraryOperation.Reinstall && !LibraryVersions.CanRemove(state)))
+                    {
+                        Log(package.Name + ": пропущено до подтверждения состояния. " + state.Detail);
+                        continue;
+                    }
                     if (operation == LibraryOperation.Reinstall && (state.Relation == LibraryRelation.Newer || state.HasNewerParts))
                         throw new InvalidOperationException(package.Name + ": переустановка старым комплектом заблокирована");
                     if (operation != LibraryOperation.Remove && (package.Kind == LibraryKind.VcBundle || package.Kind == LibraryKind.VcLegacy))
@@ -466,7 +478,11 @@ namespace ServiceTool
                     if (operation == LibraryOperation.Remove || operation == LibraryOperation.Reinstall && LibraryVersions.CanRemove(checks[package.Id]))
                     {
                         SafeActivity("Проверяем деинсталлятор: " + package.Name + "…");
-                        await Task.Run(() => { var products = LibraryMaintenance.Resolve(package); if (operation == LibraryOperation.Reinstall) LibraryMaintenance.ValidateReinstall(package, products); foreach (var product in products) LibraryMaintenance.Command(product, Path.Combine(reports, "preflight.log")); });
+                        await Task.Run(() =>
+                        {
+                            if (LibraryDevExpress.Check(package) != null || LibraryDevExpress.CanRemoveWithoutInstaller(package)) return;
+                            LibraryMaintenance.PrepareRemoval(package, LibraryMaintenance.Resolve(package), operation, Path.Combine(reports, "preflight.log"));
+                        });
                     }
                     if (operation != LibraryOperation.Remove)
                     {
@@ -520,6 +536,8 @@ namespace ServiceTool
             {
                 if (archiveStage != null)
                     PackageZipExtraction.CleanupFolder(archiveStage, "Не удалось удалить временную папку Visual C++: ", item => Log(item.Stage));
+                if (!String.IsNullOrWhiteSpace(source))
+                    BundleSession.CleanIdle(BundleFolders.BundleRoot(source), Log);
                 if (operationJournal != null)
                 {
                     Log(cancelRequested ? "Работа остановлена по запросу пользователя. Перед повтором нажми «Проверить систему»." : "Обработка очереди завершена. Результат каждого компонента и причины остановки указаны выше.");

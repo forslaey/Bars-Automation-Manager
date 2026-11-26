@@ -57,6 +57,7 @@ namespace ServiceTool
         internal static bool NeedsInstall(LibraryCheck check) { return check.State == LibraryState.Missing && check.Relation != LibraryRelation.NotApplicable; }
         internal static bool CanRemove(LibraryCheck check) { return !check.ProtectedComponent && (check.HasProduct || check.State == LibraryState.Installed || check.Relation == LibraryRelation.Older); }
         internal static bool CanReinstall(LibraryCheck check) { return CanRemove(check) && check.Relation != LibraryRelation.Newer && !check.HasNewerParts; }
+        internal static bool OpensActionDialog(LibraryCheck check) { return CanRemove(check) || check.State == LibraryState.Unknown; }
         internal static string Advice(LibraryCheck check)
         {
             if (check.ProtectedComponent) return "Пропустить: предоставлен Windows; отдельное удаление не требуется";
@@ -72,7 +73,7 @@ namespace ServiceTool
         {
             var items = selected.ToList();
             if (items.Any(c => c.Relation == LibraryRelation.Older)) return "Обновить выбранные";
-            if (items.Any(CanRemove)) return "Действия с выбранными";
+            if (items.Any(OpensActionDialog)) return "Действия с выбранными";
             if (items.Count > 0 && items.All(c => c.State == LibraryState.Unknown || c.State == LibraryState.NotApplicable)) return "Проверить выбранные";
             return "Установить выбранные";
         }

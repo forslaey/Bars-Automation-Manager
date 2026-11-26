@@ -24,6 +24,28 @@ namespace ServiceTool
             string fixture = Path.Combine(directory, "Инертный файл.exe"); File.WriteAllText(fixture, "NOT AN EXECUTABLE. NEVER RUN.");
             try
             {
+                foreach (string version in new[] { "8.2", "13.2.7" })
+                {
+                    var package = LibraryCatalog.All().Single(p => p.Group == "DevExpress" && p.Version == version);
+                    var broken = LibraryDetection.ProbeInnoRegistration(package, version, false);
+                    Check(broken.State == LibraryState.Unknown && LibraryVersions.CanReinstall(broken) &&
+                        LibraryVersions.BatchCaption(new[] { broken }) == "Действия с выбранными", "Broken DevExpress offers reinstall");
+                    var product = new LibraryRegisteredProduct { Key = package.UninstallKey, Name = package.Name, Version = version,
+                        Uninstall = LibraryPlan.Quote(Path.Combine(directory, "absent", "unins000.exe")) };
+                    Check(!LibraryMaintenance.PrepareRemoval(package, new[] { product }, LibraryOperation.Reinstall, fixture), "Matching DevExpress can repair without the deleted Inno uninstaller");
+                    Reject(() => LibraryMaintenance.PrepareRemoval(package, new[] { product }, LibraryOperation.Remove, fixture), "Removal does not silently bypass the deleted uninstaller");
+                    using (var dialog = new LibraryActionDialog(ThemePalette.Create(true), null, new[] { broken }))
+                        Check(Children(dialog).OfType<Button>().Any(button => button.Text == "Переустановить" && button.Enabled), "Reinstall button enabled in action dialog");
+                }
+                var unconfirmed = new LibraryCheck { Package = LibraryCatalog.All().First(p => p.Kind == LibraryKind.Msi),
+                    State = LibraryState.Unknown, Detail = "Не удалось прочитать сведения об установке" };
+                Check(LibraryVersions.OpensActionDialog(unconfirmed) && !LibraryVersions.CanReinstall(unconfirmed), "Unknown package opens options without guessing which product to reinstall");
+                using (var dialog = new LibraryActionDialog(ThemePalette.Create(true), null, new[] { unconfirmed }))
+                {
+                    var buttons = Children(dialog).OfType<Button>().ToArray();
+                    Check(buttons.Any(button => button.Text == "Проверить ещё раз" && button.Enabled) &&
+                        buttons.Any(button => button.Text == "Переустановить" && !button.Enabled), "Unknown product dialog offers a retry without unsafe reinstall");
+                }
                 if (args.Length == 2 && args[0] == "--inventory")
                 {
                     var report = new List<string>();

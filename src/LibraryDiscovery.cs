@@ -72,7 +72,17 @@ namespace ServiceTool
                 if (name == "Microsoft .NET Runtime 1.0.31.exe" || name == "Исправлятор .NET Famework.exe" || name == "Удалятор .NET Framework.exe" || name.IndexOf("RuntimePack", StringComparison.OrdinalIgnoreCase) >= 0) continue;
                 progress("Читаем пакет: " + name);
                 string relative = file.Substring(root.TrimEnd(Path.DirectorySeparatorChar).Length + 1);
-                LibraryPackage package = Describe(file, relative);
+                LibraryPackage package;
+                try { package = Describe(file, relative); }
+                catch (InvalidDataException error) { progress("Неизвестный или повреждённый пакет пропущен: " + name + ". " + error.Message); continue; }
+                catch (COMException error) { progress("Неизвестный или повреждённый пакет пропущен: " + name + ". Код " + error.ErrorCode); continue; }
+                catch (TargetInvocationException error)
+                {
+                    var msi = error.InnerException as COMException;
+                    if (msi == null) throw;
+                    progress("Неизвестный или повреждённый пакет пропущен: " + name + ". Код " + msi.ErrorCode);
+                    continue;
+                }
                 if (package == null) { progress("Неизвестный или ручной пакет пропущен: " + name); continue; }
                 using (var input = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read))
                     package.Sha256 = LibraryCancellation.Hash(input, cancelled);

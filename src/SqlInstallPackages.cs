@@ -75,8 +75,11 @@ namespace ServiceTool
         static IEnumerable<string> Discover(string folder)
         {
             foreach (var file in Directory.GetFiles(folder))
-                if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) == 0 && IsInstallerFile(file))
+                if (IsInstallerFile(file) && (File.GetAttributes(file) & FileAttributes.ReparsePoint) == 0)
                     yield return file;
+            // An offline Visual Studio layout contains payload files, while its launcher is at the root.
+            if (File.Exists(Path.Combine(folder, "Layout.json")) && File.Exists(Path.Combine(folder, "Catalog.json")))
+                yield break;
             foreach (var child in Directory.GetDirectories(folder))
                 if ((File.GetAttributes(child) & FileAttributes.ReparsePoint) == 0)
                     foreach (var file in Discover(child)) yield return file;

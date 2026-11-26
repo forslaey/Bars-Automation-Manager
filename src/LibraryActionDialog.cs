@@ -8,6 +8,7 @@ namespace ServiceTool
     internal sealed class LibraryActionDialog : BrandWindow
     {
         internal LibraryOperation Operation { get; private set; }
+        internal bool CheckAgain { get; private set; }
         internal LibraryActionDialog(ThemePalette colors, Icon icon, IEnumerable<LibraryCheck> selected)
         {
             var items = selected.ToList();
@@ -27,8 +28,10 @@ namespace ServiceTool
             layout.Controls.Add(new Label { Text = "Рекомендуемое действие: установить отсутствующие, обновить старые; новые пропустить.\n\nПереустановка и удаление затрагивают зарегистрированные версии выбранного поколения и разрядности. Встроенные компоненты Windows не удаляются.", AutoSize = true, Dock = DockStyle.Fill, ForeColor = colors.Muted, TextAlign = ContentAlignment.MiddleLeft, Margin = new Padding(0, 12, 0, 12) }, 0, 2);
             var buttons = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 7, RowCount = 1, Margin = Padding.Empty };
             for (int i = 0; i < 7; i++) buttons.ColumnStyles.Add(new ColumnStyle(i % 2 == 0 ? SizeType.Percent : SizeType.Absolute, i % 2 == 0 ? 25 : 12)); buttons.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            var recommended = new BrandButton { Text = "По рекомендации", Primary = true, Palette = colors, Dock = DockStyle.Fill, Margin = Padding.Empty, Font = Font, Enabled = items.Any(c => LibraryVersions.NeedsInstall(c)) };
-            recommended.Click += delegate { Operation = items.Any(c => c.Relation == LibraryRelation.Older) ? LibraryOperation.Update : LibraryOperation.Install; DialogResult = DialogResult.OK; };
+            bool canInstall = items.Any(LibraryVersions.NeedsInstall);
+            bool checkAgain = !canInstall && items.Any(c => c.State == LibraryState.Unknown);
+            var recommended = new BrandButton { Text = checkAgain ? "Проверить ещё раз" : "По рекомендации", Primary = true, Palette = colors, Dock = DockStyle.Fill, Margin = Padding.Empty, Font = Font, Enabled = canInstall || checkAgain };
+            recommended.Click += delegate { CheckAgain = checkAgain; Operation = items.Any(c => c.Relation == LibraryRelation.Older) ? LibraryOperation.Update : LibraryOperation.Install; DialogResult = DialogResult.OK; };
             var reinstall = new BrandButton { Text = "Переустановить", Enabled = items.Any(LibraryVersions.CanRemove) && !items.Any(c => c.Relation == LibraryRelation.Newer || c.HasNewerParts), Palette = colors, Dock = DockStyle.Fill, Margin = Padding.Empty, Font = Font };
             var remove = new BrandButton { Text = "Удалить", Enabled = items.Any(LibraryVersions.CanRemove), Palette = colors, Dock = DockStyle.Fill, Margin = Padding.Empty, Font = Font };
             var cancel = new BrandButton { Text = "Отмена", Palette = colors, Dock = DockStyle.Fill, Margin = Padding.Empty, DialogResult = DialogResult.Cancel, Font = Font };

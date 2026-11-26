@@ -89,7 +89,7 @@ namespace ServiceTool
                 PackageZipExtraction.Validate(input,token);
         }
 
-        internal static string Extract(string path,CancellationToken token,Action<TransferProgress> report,bool replace,string destinationName=null)
+        internal static string Extract(string path,CancellationToken token,Action<TransferProgress> report,bool replace,string destinationName=null,string topFolder=null)
         {
             if(IsZip(path))return PackageZipExtraction.Extract(path,token,report,replace,destinationName);
             string parent=Path.GetDirectoryName(path);
@@ -105,7 +105,7 @@ namespace ServiceTool
             try
             {
                 if(report!=null)report(new TransferProgress{Stage="Распаковываем комплект…"});
-                RunTar("-xkf",path,staging,token);
+                RunTar("-xkf",path,staging,token,pattern:topFolder==null?null:topFolder+"/*");
                 var pending=new System.Collections.Generic.Stack<string>();
                 pending.Push(staging);
                 while(pending.Count>0)
@@ -137,11 +137,12 @@ namespace ServiceTool
             return Path.Combine(system,"tar.exe");
         }
 
-        private static string RunTar(string options,string path,string folder,CancellationToken token,bool discardOutput=false)
+        private static string RunTar(string options,string path,string folder,CancellationToken token,bool discardOutput=false,string pattern=null)
         {
             string tar=WindowsTar();
             if(!File.Exists(tar))throw new IOException("Для архивов RAR и 7z нужен tar.exe из Windows.");
-            var start=new ProcessStartInfo(tar,options+" \""+path+"\""+(folder==null?"":" -C \""+folder+"\""))
+            var start=new ProcessStartInfo(tar,options+" \""+path+"\""+(folder==null?"":" -C \""+folder+"\"")+
+                (pattern==null?"":" -- "+LibraryPlan.Quote(pattern)))
             {
                 UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true,
                 StandardOutputEncoding=Encoding.UTF8

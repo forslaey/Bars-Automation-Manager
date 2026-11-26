@@ -569,6 +569,7 @@ namespace ServiceTool
     internal sealed class BrandTextBox : TextBox
     {
         private ThemePalette palette;
+        internal bool KeepCaretOnFocus;
         internal event EventHandler PaletteChanged;
         public ThemePalette Palette
         {
@@ -581,12 +582,21 @@ namespace ServiceTool
             }
         }
         public BrandTextBox() { BorderStyle=BorderStyle.None; }
+
+        protected override void OnGotFocus(EventArgs e)
+        {
+            int caret = SelectionStart;
+            base.OnGotFocus(e);
+            if (KeepCaretOnFocus) Select(caret, 0);
+        }
     }
     // Keep the native popup and keyboard behavior with a palette-aware border.
     internal sealed class BrandComboBox : ComboBox
     {
         private readonly PopupFrame popupFrame;
         internal bool UseManagedPopup;
+        internal bool HideSelectedText;
+        internal event EventHandler EmptyManagedPopupRequested;
         private ToolStripDropDown managedPopup;
         private bool suppressOwnerClick;
         public ThemePalette Palette;
@@ -658,7 +668,13 @@ namespace ServiceTool
 
         private void ShowManagedPopup()
         {
-            if (!Enabled || Items.Count == 0 || managedPopup != null || Palette == null) return;
+            if (!Enabled || managedPopup != null || Palette == null) return;
+            if (Items.Count == 0)
+            {
+                var request = EmptyManagedPopupRequested;
+                if (request != null) request(this, EventArgs.Empty);
+                return;
+            }
             OnDropDown(EventArgs.Empty);
             int rowHeight = Math.Max(ItemHeight, Font.Height + 8);
             int width = Math.Max(Width, DropDownWidth);
@@ -752,7 +768,8 @@ namespace ServiceTool
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
-            if (UseManagedPopup && (keyData == Keys.F4 || keyData == (Keys.Alt | Keys.Down) || keyData == Keys.Space))
+            if (UseManagedPopup && (keyData == Keys.F4 || keyData == (Keys.Alt | Keys.Down) ||
+                (DropDownStyle == ComboBoxStyle.DropDownList && keyData == Keys.Space)))
             {
                 if (managedPopup == null) ShowManagedPopup();
                 else managedPopup.Close();
@@ -780,6 +797,9 @@ namespace ServiceTool
                         message.Result = managedPopup != null ? (IntPtr)1 : IntPtr.Zero;
                         return;
                     case 0x0201: // WM_LBUTTONDOWN
+                        int point = unchecked((int)message.LParam.ToInt64());
+                        if (DropDownStyle == ComboBoxStyle.DropDown &&
+                            !DropDownButtonRectangle().Contains((short)(point & 0xffff), (short)(point >> 16))) break;
                         if (CanFocus) Focus();
                         if (suppressOwnerClick) suppressOwnerClick = false;
                         else if (managedPopup == null) ShowManagedPopup();
@@ -787,7 +807,8 @@ namespace ServiceTool
                         return;
                     case 0x0202: // WM_LBUTTONUP
                     case 0x0203: // WM_LBUTTONDBLCLK
-                        return;
+                        if (DropDownStyle == ComboBoxStyle.DropDownList) return;
+                        break;
                 }
             }
             if(Palette!=null&&DropDownStyle==ComboBoxStyle.DropDownList&&message.Msg==WM_PAINT){PaintInfo paint;IntPtr dc=BeginPaint(Handle,out paint);try{using(var graphics=Graphics.FromHdc(dc))PaintChrome(graphics);}finally{EndPaint(Handle,ref paint);}return;}
@@ -824,8 +845,9 @@ namespace ServiceTool
               {
                   Color surface=Enabled?p.SurfaceAlt:p.DisabledSurface;
                   using(Brush brush=new SolidBrush(surface))graphics.FillRectangle(brush,ClientRectangle);
-                  TextRenderer.DrawText(graphics,Text,Font,new Rectangle(7,1,Math.Max(1,button.Left-12),ClientSize.Height-2),Enabled?p.Text:p.DisabledText,
-                      TextFormatFlags.VerticalCenter|TextFormatFlags.SingleLine|TextFormatFlags.NoPrefix|TextFormatFlags.EndEllipsis|TextFormatFlags.PreserveGraphicsTranslateTransform);
+                  if (!HideSelectedText)
+                      TextRenderer.DrawText(graphics,Text,Font,new Rectangle(7,1,Math.Max(1,button.Left-12),ClientSize.Height-2),Enabled?p.Text:p.DisabledText,
+                          TextFormatFlags.VerticalCenter|TextFormatFlags.SingleLine|TextFormatFlags.NoPrefix|TextFormatFlags.EndEllipsis|TextFormatFlags.PreserveGraphicsTranslateTransform);
               }
             Rectangle inner = new Rectangle(1, 1, ClientSize.Width - 2, ClientSize.Height - 2);
             Rectangle fill = Rectangle.Intersect(inner, Rectangle.FromLTRB(button.Left - 1, 1, button.Right + 1, ClientSize.Height - 1));

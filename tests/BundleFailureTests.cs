@@ -30,14 +30,17 @@ namespace ServiceTool
    Check(!File.Exists(fullTarget)&&File.Exists(fullSource),"Disk full preserves stage");
    string receiptRoot=Path.Combine(root,"receipts");Directory.CreateDirectory(receiptRoot);
    var file=new BundleRemoteFile {Path="/package.exe",Size=3,Sha256=YandexBundleSource.Hash(destination,CancellationToken.None)};
-   File.Copy(destination,BundleFolders.PackageDestination(receiptRoot,file.Path));
+   string receiptTarget=BundleFolders.PackageDestination(receiptRoot,file.Path);
+   Directory.CreateDirectory(Path.GetDirectoryName(receiptTarget));
+   File.Copy(destination,receiptTarget);
+   string receiptState=BundleSession.StateFolder(receiptRoot);
    foreach(string phase in new[]{"before-receipt-write","before-receipt-publish"}){
     string warning=BundlePublication.Record(receiptRoot,file,s=>{if(s==phase)throw new IOException("Injected disk full");});
     Check(warning!=null&&BundlePublication.Matches(receiptRoot,file,CancellationToken.None),"Receipt failure leaves published content intact");
-    Check(!Directory.GetFiles(receiptRoot,"*.tmp",SearchOption.AllDirectories).Any(),"Receipt temporary file cleaned");
+    Check(!Directory.GetFiles(receiptState,"*.tmp",SearchOption.AllDirectories).Any(),"Receipt temporary file cleaned");
    }
    Check(BundlePublication.Record(receiptRoot,file,null)==null,"Receipt recovery succeeds");Check(new BundleReceipts(receiptRoot).CanReplace(file,file.Sha256),"Recovered ownership");
-   string receipt=Directory.GetFiles(receiptRoot,"*.xml",SearchOption.AllDirectories).Single();File.WriteAllText(receipt,"<!DOCTYPE x [<!ENTITY e SYSTEM 'file:///C:/Windows/win.ini'>]><file>&e;</file>");
+   string receipt=Directory.GetFiles(receiptState,"*.xml",SearchOption.AllDirectories).Single();File.WriteAllText(receipt,"<!DOCTYPE x [<!ENTITY e SYSTEM 'file:///C:/Windows/win.ini'>]><file>&e;</file>");
    Check(!new BundleReceipts(receiptRoot).CanReplace(file,file.Sha256),"Malicious receipt denied");
    File.WriteAllText(receipt,"broken");Check(!new BundleReceipts(receiptRoot).CanReplace(file,file.Sha256),"Corrupt receipt denied");
    string repaired=BundlePublication.Record(receiptRoot,file,null);Check(repaired==null,"Corrupt receipt repair: "+repaired);

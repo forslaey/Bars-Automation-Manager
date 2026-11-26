@@ -183,7 +183,13 @@ namespace ServiceTool
             timer.Tick+=delegate{RefreshProgress();};VisibleChanged+=delegate{timer.Enabled=Visible;};
             FormClosed+=delegate{if(toolRead!=null)toolRead.Cancel();};
             FormClosing+=delegate(object sender,FormClosingEventArgs e){if(busy){e.Cancel=true;if(extracting){closeAfter=true;CancelToolOperation();return;}if(!downloading || closeAfter || ModuleNavigation.ExitConfirmed || BrandMessageBox.Show(this,"Остановить загрузку и закрыть окно? Готовые файлы сохранятся.","Скачать комплект",MessageBoxButtons.YesNo,MessageBoxIcon.Warning,MessageBoxDefaultButton.Button2)==DialogResult.Yes){closeAfter=true;cancelRequested=true;paused=false;if(cancellation!=null)cancellation.Cancel();}}};
-            if(programs||sqlOnly||toolsOnly){software.Checked=programs;sql.Checked=sqlOnly;}SetTheme(Colors.Dark,false);Shown+=async delegate{await RefreshTools();};UpdateState();
+            if(programs||sqlOnly||toolsOnly){software.Checked=programs;sql.Checked=sqlOnly;}SetTheme(Colors.Dark,false);
+            Shown += async delegate
+            {
+                BundleSession.CleanIdle(folder.Text, Log);
+                await RefreshTools();
+            };
+            UpdateState();
         }
         private async Task ChooseSource()
         {
@@ -308,6 +314,7 @@ namespace ServiceTool
             catch (OperationCanceledException) { toolOperationCancelled = true; }
             catch (Exception ex) { total.FinishOperation("Не выполнено: " + ex.Message, failed: true); }
             finally { busy = extracting = false; UpdateState(); if (closeAfter) Close(); }
+            BundleSession.CleanIdle(folder.Text, Log);
             if (!IsDisposed && (!toolOperationCancelled || refreshOnCancellation)) await RefreshTools();
         }
         private async Task RecheckTools()
@@ -502,6 +509,13 @@ namespace ServiceTool
             if(!toolsOnly&&BrandMessageBox.Show(this,"Скачать "+selected.Count+" файлов ("+SizeText(selected.Sum(e=>e.File.Size))+")?\r\nУстановщики не будут запущены.","Скачать комплект",MessageBoxButtons.YesNo,MessageBoxIcon.Question)!=DialogResult.Yes)return;
             var replacements=selected.Where(e=>e.OriginalHash!=null).ToArray();
             if(replacements.Length>0&&BrandMessageBox.Show(this,(toolsOnly?"Заменить выбранные локальные архивы (":"Заменить отличающиеся локальные установщики (")+replacements.Length+")?\r\n"+String.Join("\r\n",replacements.Take(6).Select(e=>e.File.Path)),toolsOnly?"Замена архивов":"Замена установщиков",MessageBoxButtons.YesNo,MessageBoxIcon.Warning,MessageBoxDefaultButton.Button2)!=DialogResult.Yes)return;
+            IDisposable transferSession = null;
+            if (!alternativeAttempt)
+            {
+                try { transferSession = BundleSession.Begin(scannedRoot, Log); }
+                catch (IOException error) { summary.Text = error.Message; Log(error.Message); return; }
+                catch (UnauthorizedAccessException error) { summary.Text = error.Message; Log(error.Message); return; }
+            }
             Log("Начинаем загрузку из "+CloudName(downloadCloud)+". В очереди: "+selected.Count+" файлов. Уже готовые файлы повторно не скачиваем.");
             busy=true;downloading=true;preparingDownload=true;cancelRequested=false;paused=false;batch=selected;receivedBytes=0;started=DateTime.UtcNow;UpdateState();
             try
@@ -593,10 +607,7 @@ namespace ServiceTool
             }
             finally
             {
-                if(!alternativeAttempt)
-                    try{BundleSession.Cleanup(scannedRoot);}
-                    catch(IOException ex){Log("Не удалось удалить временную папку загрузки. "+ex.Message);}
-                    catch(UnauthorizedAccessException ex){Log("Не удалось удалить временную папку загрузки. "+ex.Message);}
+                if (transferSession != null) transferSession.Dispose();
             }
         }
         void RefreshProgress()

@@ -107,11 +107,11 @@ namespace ServiceTool
             grid.RowsAdded+=delegate{fit();};grid.RowsRemoved+=delegate{fit();};grid.RowHeightChanged+=delegate{fit();};
 
             scan = NewButton("Проверить локально");
-            download = NewButton("Скачать наборы…");
-            prepare = NewButton("Подготовить набор…");
+            download = NewButton("Скачать наборы");
+            prepare = NewButton("Подготовить свой набор");
             run = NewButton("Запустить мастер установки", true);
             var actions = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = new Padding(0, 8, 0, 0) };
-            ModuleNavigation.StandardFooter(actions, scan, download, prepare, run);
+            ModuleNavigation.StandardFooter(actions, scan, download, run);
             Controls.Add(actions, 0, 2);
             installed = new Label { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true };
             Controls.Add(installed, 0, 3);
@@ -123,9 +123,7 @@ namespace ServiceTool
             back = NewButton("В меню");
             close = NewButton("Закрыть");
             var footer = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, Padding = new Padding(0, 10, 0, 0) };
-            var spacer = new Label();
-            footer.Controls.Add(spacer);
-            ModuleNavigation.StandardFooter(footer, back, close);
+            ModuleNavigation.RightAlignedFooterWithWideFirst(footer, 70, prepare, back, close);
             Controls.Add(footer, 0, 5);
 
             grid.SelectionChanged += delegate { UpdateActions(); };

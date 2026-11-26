@@ -298,7 +298,20 @@ namespace ServiceTool
                 if (!acquired) return new LibraryInstallResult { ExitCode = 1618, State = LibraryState.Unknown, Message = "Другая очередь установки библиотек уже выполняется. Дождись её завершения.", LogPath = "" };
                 try
                 {
-                    if (operation == LibraryOperation.Remove) return LibraryMaintenance.Remove(package, LogDirectory(session), progress, connected);
+                    if (operation == LibraryOperation.Remove)
+                    {
+                        if (LibraryDevExpress.IsPackage(package))
+                        {
+                            var managed = LibraryDevExpress.Remove(package, progress);
+                            if (managed != null) return managed;
+                        }
+                        bool devExpress = LibraryDevExpress.IsPackage(package);
+                        if (devExpress) progress(LibraryDevExpress.Removing);
+                        var result = LibraryMaintenance.Remove(package, LogDirectory(session), devExpress ? (Action<string>)(_ => progress(LibraryDevExpress.Removing)) : progress, connected);
+                        if (devExpress && LibraryPlan.Success(result.ExitCode) && !result.Reboot && result.State == LibraryState.Missing)
+                            LibraryDevExpress.RemoveInstalledFolder(package);
+                        return result;
+                    }
                     return InstallCore(package, root, session, progress, connected, operation);
                 }
                 finally { gate.ReleaseMutex(); }
@@ -340,14 +353,20 @@ namespace ServiceTool
                     LibrarySource.VerifyStream(locked, package);
                     LibraryCancellation.Check();
                     if (!connected()) throw new IOException("Менеджер закрыл соединение до запуска пакета; установка не начата.");
-                    if (operation == LibraryOperation.Reinstall && LibraryVersions.CanRemove(before))
+                    if (operation == LibraryOperation.Reinstall && LibraryVersions.CanRemove(before) &&
+                        LibraryDevExpress.Check(package) == null && !LibraryDevExpress.CanRemoveWithoutInstaller(package))
                     {
-                        LibraryMaintenance.ValidateReinstall(package, LibraryMaintenance.Resolve(package));
-                        LibraryInstallResult removed = LibraryMaintenance.Remove(package, logDirectory, progress, connected);
-                        if (!LibraryPlan.Success(removed.ExitCode) || removed.Reboot || removed.State != LibraryState.Missing) return removed;
+                        bool removeFirst = LibraryMaintenance.PrepareRemoval(package, LibraryMaintenance.Resolve(package), operation, log);
+                        if (removeFirst)
+                        {
+                            LibraryInstallResult removed = LibraryMaintenance.Remove(package, logDirectory, progress, connected);
+                            if (!LibraryPlan.Success(removed.ExitCode) || removed.Reboot || removed.State != LibraryState.Missing) return removed;
+                        }
+                        else progress("Восстанавливаем DevExpress штатным установщиком");
                         LibraryCancellation.Check();
                     if (!connected()) throw new IOException("Соединение закрыто после удаления. Повторную установку можно выполнить из менеджера.");
                     }
+                    if (LibraryDevExpress.IsPackage(package)) return LibraryDevExpress.Install(package, verified, progress);
                     ProcessStartInfo start = LibraryPlan.Command(package, verified, log, operation == LibraryOperation.Update && package.Kind == LibraryKind.Msi && LibraryMaintenance.ExactMsiInstalled(package.ProductCode)); start.WorkingDirectory = stage;
                     int code = -1;
                     for (int attempt = 0; attempt < 4; attempt++)

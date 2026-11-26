@@ -32,7 +32,7 @@ foreach ($taskArchitecture in @('x86','x64')) {
 $taskFailures = New-Object 'System.Collections.Generic.List[string]'
 function Invoke-TaskTests([string] $taskName, [string] $taskMain, [string[]] $taskInputs) {
     $taskOutput = Join-Path $taskBuild ($taskName + '.exe')
-    $taskArguments = @('/nologo', '/target:exe', '/platform:anycpu', '/utf8output', '/codepage:65001', "/out:$taskOutput", "/main:$taskMain", '/reference:System.dll', '/reference:System.Core.dll', '/reference:System.Xml.dll', '/reference:System.Drawing.dll', '/reference:System.Windows.Forms.dll', '/reference:System.IO.Compression.dll',  '/reference:System.Configuration.Install.dll', '/reference:System.ServiceProcess.dll', '/reference:System.Security.dll', '/reference:System.Web.Extensions.dll', "/win32manifest:$(Join-Path $taskSource 'app.manifest')", "/resource:$(Join-Path $taskAssets 'BarsHeader.png'),BARS.Logo.png", "/resource:$(Join-Path $taskAssets 'BarsHeaderDark.png'),BARS.Logo.Dark.png", "/resource:$(Join-Path $taskAssets '12-novyy-god-300dpi.png'),BARS.NewYear.png", "/resource:$(Join-Path $taskAssets 'Bars.ico'),BARS.Icon.ico", "/resource:$(Join-Path $taskAssets 'AnyDesk.png'),BARS.AnyDesk.png", "/resource:$(Join-Path $taskAssets 'RuDesktop.png'),BARS.RuDesktop.png", "/resource:$(Join-Path $taskAssets 'BundleManifest.json'),BARS.BundleManifest.json")
+    $taskArguments = @('/nologo', '/target:exe', '/platform:anycpu', '/utf8output', '/codepage:65001', "/out:$taskOutput", "/main:$taskMain", '/reference:System.dll', '/reference:System.Core.dll', '/reference:System.Xml.dll', '/reference:System.Data.dll', '/reference:System.Drawing.dll', '/reference:System.Windows.Forms.dll', '/reference:System.IO.Compression.dll',  '/reference:System.Configuration.Install.dll', '/reference:System.ServiceProcess.dll', '/reference:System.Security.dll', '/reference:System.Web.Extensions.dll', "/win32manifest:$(Join-Path $taskSource 'app.manifest')", "/resource:$(Join-Path $taskAssets 'BarsHeader.png'),BARS.Logo.png", "/resource:$(Join-Path $taskAssets 'BarsHeaderDark.png'),BARS.Logo.Dark.png", "/resource:$(Join-Path $taskAssets '12-novyy-god-300dpi.png'),BARS.NewYear.png", "/resource:$(Join-Path $taskAssets 'Bars.ico'),BARS.Icon.ico", "/resource:$(Join-Path $taskAssets 'AnyDesk.png'),BARS.AnyDesk.png", "/resource:$(Join-Path $taskAssets 'RuDesktop.png'),BARS.RuDesktop.png", "/resource:$(Join-Path $taskAssets 'BundleManifest.json'),BARS.BundleManifest.json")
     $taskArguments += "/resource:$(Join-Path $taskAssets 'Leya.png'),BARS.Leya.png"
     $taskArguments += "/resource:$(Join-Path $taskAssets 'VcArchive7za.bin'),BARS.VcArchive7za"
     $taskArguments = @('/noconfig','/nostdlib+',"/reference:$(Join-Path $ReferenceAssemblies 'mscorlib.dll')") + @($taskArguments | ForEach-Object {
@@ -60,7 +60,7 @@ if ($FindingsAudit) {
     return
 }
 if ($BundleWorkflow) {
-    foreach ($name in @('Audit2393Tests','BundleUiRevisionTests','BundleTests','BundleTransportTests','BundleMirrorTests','SqlManagerTests','GuideDpiTests','UserGuideTests')) {
+    foreach ($name in @('Audit2393Tests','BundleUiRevisionTests','BundleTests','BundleTransportTests','BundleMirrorTests','BundleFailureTests','SqlManagerTests','GuideDpiTests','UserGuideTests')) {
         Invoke-TaskTests $name ("ServiceTool." + $name) ($taskUiSources + (Join-Path $taskTests ($name + '.cs')))
     }
     if ($taskFailures.Count) { throw ("Не пройдены проверки: " + ($taskFailures -join ", ")) }

@@ -94,12 +94,14 @@ namespace ServiceTool
         private readonly LibraryGridScrollBar scroll = new LibraryGridScrollBar { Dock = DockStyle.Right, Width = 14, AlignToRows = true, AutoHideWhenUnused = true, UseCardBackground = true, DeferScrollCorrection = true };
         private readonly DownloadProgressView progress = new DownloadProgressView { Dock = DockStyle.Fill };
         private readonly JournalTextBox journal = new JournalTextBox { Dock = DockStyle.Fill, ReadOnly = true, Multiline = true };
-        private readonly BrandButton scan, download, apply, cancel, menu;
+        private readonly BrandButton scan, download, apply, cancel, menu, sql;
         private List<BarsReleaseCatalog.Artifact> remote = new List<BarsReleaseCatalog.Artifact>();
         private BarsReleaseCatalog catalog;
         private readonly Dictionary<string, string> downloadErrors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private CancellationTokenSource operation;
         private readonly HashSet<Package> markedPackages = new HashSet<Package>();
+        private readonly Dictionary<string, string> deployedFolders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private bool sqlOpen;
         private sealed class InstallerStillRunningException : IOException
         {
             internal readonly Task Completion;
@@ -124,7 +126,7 @@ namespace ServiceTool
             var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 8,
                 Margin = Padding.Empty, MinimumSize = new Size(0, 550) };
             body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            foreach (int height in new[] { 40, 34, 54, 0, 56, 100, 106, 54 })
+            foreach (int height in new[] { 40, 34, services ? 54 : 42, 0, 56, 100, 106, 54 })
                 body.RowStyles.Add(new RowStyle(height == 0 ? SizeType.Percent : SizeType.Absolute, height == 0 ? 100 : height));
             body.Controls.Add(ModuleHeading(Text), 0, 0);
             localSource = Label("Локальный комплект: " + folder, true);
@@ -132,7 +134,27 @@ namespace ServiceTool
             sourcePicker.Items.AddRange(new object[] { Official, Yandex });
             sourcePicker.SelectedIndex = 0;
             sourcePicker.Margin = new Padding(0, 6, 0, 4);
-            body.Controls.Add(sourcePicker, 0, 2);
+            var sourceRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Margin = Padding.Empty };
+            sourceRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            sourceRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 226));
+            sourceRow.Controls.Add(sourcePicker, 0, 0);
+            if (!services)
+            {
+                sourcePicker.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+                sourcePicker.Margin = new Padding(0, 4, 0, 0);
+                sql = Button("Подключение к базе данных", false);
+                sql.Dock = DockStyle.None;
+                sql.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+                sql.Margin = Padding.Empty;
+                var sqlHost = new Panel { Dock = DockStyle.Fill, Margin = Padding.Empty };
+                sqlHost.Controls.Add(sql);
+                sourceRow.Controls.Add(sqlHost, 1, 0);
+                sourceRow.Layout += delegate
+                {
+                    sql.SetBounds(0, sourcePicker.Top - sqlHost.Top, sqlHost.ClientSize.Width, sourcePicker.Height);
+                };
+            }
+            body.Controls.Add(sourceRow, 0, 2);
             sourcePicker.SelectedIndexChanged += ChangeSource;
             var card = new Card { Dock = DockStyle.Fill, Padding = new Padding(10), Margin = Padding.Empty };
             grid.Dock = DockStyle.Fill;
@@ -209,6 +231,31 @@ namespace ServiceTool
             scan.Click += Scan;
             download.Click += Download;
             apply.Click += Apply;
+            if (sql != null) sql.Click += async delegate
+            {
+                if (operation != null || sqlOpen) return;
+                var selected = Selected();
+                var item = selected.Length == 1 ? selected[0] : selected.Length == 0 && grid.CurrentRow != null ? grid.CurrentRow.Tag as Package : null;
+                if (item == null)
+                {
+                    BrandMessageBox.Show(this, "Выбери конкретную программу для настройки подключения к SQL Server", Text);
+                    return;
+                }
+                sqlOpen = true;
+                UpdateActions();
+                try
+                {
+                    string deployed;
+                    deployedFolders.TryGetValue(item.Name, out deployed);
+                    var configuration = await Task.Run(() => BarsSqlConfiguration.ForPackage(item.Name, deployed));
+                    if (IsDisposed) return;
+                    using (var dialog = new BarsSqlDialog(Colors, Icon, configuration))
+                        if (await ModuleNavigation.ShowOwnedAsync(this, dialog, false) == DialogResult.OK && !IsDisposed)
+                            Log("Настройки подключения SQL сохранены.");
+                }
+                catch (Exception error) { if (!IsDisposed) BrandMessageBox.Show(this, error.Message, Text); }
+                finally { sqlOpen = false; if (!IsDisposed) UpdateActions(); }
+            };
             cancel.Click += delegate { if (operation != null) operation.Cancel(); };
             menu.Click += delegate { if (!ModuleNavigation.ReturnToHub()) Close(); };
             close.Click += delegate { Close(); };
@@ -216,7 +263,7 @@ namespace ServiceTool
             if (localFolder == null)
                 Activated += async delegate
                 {
-                    if (operation != null) return;
+                    if (operation != null || sqlOpen) return;
                     string selectedRoot = BundlePreferences.Load(services ? BundleSection.BarsServices : BundleSection.BarsPrograms);
                     string selected = PackageFolder(selectedRoot, services);
                     if (String.Equals(folder, selected, StringComparison.OrdinalIgnoreCase)) return;
@@ -278,6 +325,7 @@ namespace ServiceTool
             grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = Colors.SurfaceAlt;
             grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = Colors.Text;
             sourcePicker.Palette = Colors;
+            if (localSource != null) localSource.ForeColor = Colors.Muted;
             scroll.Palette = Colors;
             progress.Palette = Colors;
             foreach (DataGridViewRow row in grid.Rows)
@@ -286,7 +334,7 @@ namespace ServiceTool
 
         private void Toggle(int index, int column)
         {
-            if (operation != null || column < 0) return;
+            if (operation != null || sqlOpen || column < 0) return;
             var group = grid.Rows[index].Tag as VersionGroup;
             if (group != null)
             {
@@ -355,9 +403,10 @@ namespace ServiceTool
 
         private void UpdateActions()
         {
-            bool idle = operation == null;
+            bool idle = operation == null && !sqlOpen;
             var selected = Selected();
             scan.Enabled = menu.Enabled = sourcePicker.Enabled = idle;
+            if (sql != null) sql.Enabled = idle;
             download.Enabled = idle && selected.Any(item => item.CanDownload);
             apply.Enabled = idle && selected.Length > 0 && selected.All(item => item.Local &&
                 (services || BarsReleaseCatalog.HasSilentProfile(item.Name)));
@@ -718,6 +767,9 @@ namespace ServiceTool
                         MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2)));
                     if (answer != DialogResult.Yes) throw new OperationCanceledException();
                 }
+                using (items.Any(item => item.YandexFile != null) ?
+                    BundleSession.Begin(bundleRoot, message => Invoke((MethodInvoker)(() => Log(message)))) : null)
+                {
                 var failed = new List<string>();
                 foreach (var item in items)
                 {
@@ -745,6 +797,7 @@ namespace ServiceTool
                 {
                     Invoke((MethodInvoker)delegate { foreach (string detail in failed) Log(detail); });
                     throw new IOException("Не скачано файлов: " + failed.Count + ". Подробности в журнале.");
+                }
                 }
             });
         }
@@ -811,6 +864,7 @@ namespace ServiceTool
                     ToolsDeployment.SafePath(targets[i]);
                     if (services) Extract(items[i].Path, targets[i], token);
                     else Install(items[i], targets[i], token);
+                    if (!services) deployedFolders[items[i].Name] = targets[i];
                 }
             });
         }
@@ -908,6 +962,7 @@ namespace ServiceTool
                 catch (OperationCanceledException) { progress.Stage("Действие отменено", cancelled:true); Log("Действие отменено"); }
                 catch (Exception error) { progress.Stage(error.Message, failed:true); Log(error.Message); }
                 {
+                    BundleSession.CleanIdle(bundleRoot, Log);
                     try { if (!refreshed && !cancellation.IsCancellationRequested && !closeAfterOperation) await RefreshRows(cancellation.Token); }
                     catch (OperationCanceledException) { }
                     catch (Exception error) { Log(error.Message); }

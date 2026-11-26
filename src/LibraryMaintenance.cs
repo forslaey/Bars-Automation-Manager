@@ -140,8 +140,15 @@ namespace ServiceTool
                 if (!executable.Success) throw new InvalidDataException("Не найден EXE зарегистрированного деинсталлятора");
                 file = executable.Groups[1].Value; arguments = command.Substring(executable.Length).Trim();
             }
-            if (!Path.IsPathRooted(file) || !String.Equals(Path.GetExtension(file), ".exe", StringComparison.OrdinalIgnoreCase) || !File.Exists(file))
+            if (!Path.IsPathRooted(file) || !String.Equals(Path.GetExtension(file), ".exe", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("Файл зарегистрированного деинсталлятора недоступен: " + file);
+            try
+            {
+                if ((File.GetAttributes(file) & FileAttributes.Directory) != 0)
+                    throw new InvalidDataException("Вместо деинсталлятора найдена папка: " + file);
+            }
+            catch (FileNotFoundException) { throw new FileNotFoundException("Файл зарегистрированного деинсталлятора недоступен: " + file, file); }
+            catch (DirectoryNotFoundException) { throw new FileNotFoundException("Файл зарегистрированного деинсталлятора недоступен: " + file, file); }
             string basename = Path.GetFileName(file);
             if (new[] { "cmd.exe", "powershell.exe", "pwsh.exe", "wscript.exe", "cscript.exe", "rundll32.exe", "msiexec.exe" }.Contains(basename, StringComparer.OrdinalIgnoreCase))
                 throw new InvalidDataException("Эта строка деинсталляции требует отдельного правила: " + product.Name);
@@ -153,6 +160,24 @@ namespace ServiceTool
             Guid guid;
             if (target.Msi && Guid.TryParse(target.Key, out guid)) return MsiQueryProductState(target.Key) == 5;
             return Inventory().Any(r => r.Key == target.Key && r.Architecture == target.Architecture);
+        }
+
+        internal static bool PrepareRemoval(LibraryPackage package, IList<LibraryRegisteredProduct> products, LibraryOperation operation, string log)
+        {
+            if (operation == LibraryOperation.Reinstall) ValidateReinstall(package, products);
+            foreach (var product in products)
+            {
+                try { Command(product, log); }
+                catch (FileNotFoundException error)
+                {
+                    if (operation == LibraryOperation.Reinstall && package.Kind == LibraryKind.Inno && package.Group == "DevExpress" &&
+                        products.Count == 1 && LibraryVersions.Compare(product.Version, package.Version) == 0 &&
+                        Regex.IsMatch(Path.GetFileName(error.FileName), @"^unins\d{3}\.exe$", RegexOptions.IgnoreCase))
+                        return false;
+                    throw;
+                }
+            }
+            return true;
         }
         public static LibraryInstallResult Remove(LibraryPackage package, string directory, Action<string> progress, Func<bool> connected)
         {

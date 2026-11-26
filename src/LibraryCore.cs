@@ -185,7 +185,13 @@ namespace ServiceTool
                         found.HasProduct = found.Relation != LibraryRelation.Incompatible; choices.Add(found);
                     }
                     if (choices.Count > 0) return choices.OrderBy(c => c.Relation == LibraryRelation.Incompatible ? 1 : 0).ThenByDescending(c => LibraryVersions.Number(c.ActualVersion)).First();
-                    if (codes.Count > 0) { result.State = LibraryState.Unknown; result.Detail = "Продукт зарегистрирован, но его версию определить не удалось"; }
+                    if (codes.Count > 0)
+                    {
+                        result.State = LibraryState.Unknown;
+                        result.HasProduct = codes.Contains(package.ProductCode, StringComparer.OrdinalIgnoreCase);
+                        result.HasNewerParts = true;
+                        result.Detail = "Продукт зарегистрирован, но его версию определить не удалось";
+                    }
                 }
                 else if (package.Kind == LibraryKind.DotNet)
                 {
@@ -193,7 +199,9 @@ namespace ServiceTool
                 }
                 else if (package.Kind == LibraryKind.Inno)
                 {
-                    var confirmed = new List<LibraryCheck>();
+                    var registeredByManager = LibraryDevExpress.Check(package);
+                    if (registeredByManager != null) return registeredByManager;
+                    var registered = new List<LibraryCheck>();
                     foreach (RegistryHive hive in new[] { RegistryHive.LocalMachine, RegistryHive.CurrentUser })
                     foreach (RegistryView view in Views())
                     using (RegistryKey root = RegistryKey.OpenBaseKey(hive, view))
@@ -202,11 +210,14 @@ namespace ServiceTool
                         if (key == null) continue;
                         string version = Convert.ToString(key.GetValue("DisplayVersion")), directory = Convert.ToString(key.GetValue("InstallLocation"));
                         if (!LibraryVersions.Compatible(package, version)) continue;
-                        if (!String.IsNullOrWhiteSpace(directory) && Directory.Exists(directory) && Directory.EnumerateFiles(directory, "DevExpress*.dll", SearchOption.AllDirectories).Any())
-                        { confirmed.Add(LibraryVersions.Known(package, version, "Запись установки " + version + " и файлы DevExpress найдены")); continue; }
-                        result.State = LibraryState.Unknown; result.Detail = "Запись установки найдена, но DLL в каталоге не подтверждены";
+                        bool files = !String.IsNullOrWhiteSpace(directory) && Directory.Exists(directory) &&
+                            Directory.EnumerateFiles(directory, "DevExpress*.dll", SearchOption.AllDirectories).Any();
+                        registered.Add(ProbeInnoRegistration(package, version, files));
                     }
-                    if (confirmed.Count > 0) return confirmed.OrderByDescending(c => LibraryVersions.Number(c.ActualVersion)).First();
+                    if (registered.Count > 0) return registered.OrderByDescending(c => LibraryVersions.Number(c.ActualVersion))
+                        .ThenBy(c => c.State == LibraryState.Unknown).First();
+                    var remainingFolder = LibraryDevExpress.CheckRemainingFolder(package);
+                    if (remainingFolder != null) return remainingFolder;
                 }
                 else if (package.Kind == LibraryKind.Framework)
                 {
@@ -263,6 +274,17 @@ namespace ServiceTool
         {
             switch (version) { case "4.6": return 393295; case "4.6.1": return 394254; case "4.6.2": return 394802; case "4.7": return 460798; case "4.7.1": return 461308; case "4.7.2": return 461808; case "4.8": return 528040; case "4.8.1": return 533320; default: throw new NotSupportedException("Неизвестное поколение .NET Framework: " + version); }
         }
+        internal static LibraryCheck ProbeInnoRegistration(LibraryPackage package, string version, bool filesPresent)
+        {
+            var check = LibraryVersions.Known(package, version, "Запись установки " + version + " и файлы DevExpress найдены");
+            if (!filesPresent && check.HasProduct)
+            {
+                check.State = LibraryState.Unknown;
+                check.Detail = "Запись установки найдена, но DLL в каталоге не подтверждены.";
+            }
+            return check;
+        }
+
         internal static LibraryCheck ProbeRuntime(LibraryPackage package, IEnumerable<string> directories, IEnumerable<LibraryRegisteredProduct> inventory, Func<LibraryRegisteredProduct, bool> registered, Func<string, string> informationalVersion = null)
         {
             var result = new LibraryCheck { Package = package, State = LibraryState.Missing, Relation = LibraryRelation.Missing, Detail = "Подходящий runtime не найден: " + package.RuntimeFamily + ", разрядность " + package.Architecture };

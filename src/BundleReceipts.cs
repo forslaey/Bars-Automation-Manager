@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -16,11 +16,12 @@ namespace ServiceTool
         static readonly object gate=new object();
         internal BundleReceipts(string root):this(root,null){}
         internal BundleReceipts(string root,Action<string> checkpoint){this.root=root;this.checkpoint=checkpoint;}
-        string Receipt(string relative)
+        string Receipt(string relative, bool legacy = false)
         {
             string key;
             using(var hash=System.Security.Cryptography.SHA256.Create())key=BitConverter.ToString(hash.ComputeHash(System.Text.Encoding.UTF8.GetBytes(relative.ToLowerInvariant()))).Replace("-","");
-            return YandexBundleSource.LocalPath(root,"/.bars-download/receipts/"+key+".xml");
+            return legacy ? YandexBundleSource.LocalPath(root, "/.bars-download/receipts/" + key + ".xml") :
+                Path.Combine(BundleSession.StateFolder(root), "receipts", key + ".xml");
         }
         internal bool CanReplace(BundleRemoteFile file,string currentHash)
         {
@@ -33,10 +34,12 @@ namespace ServiceTool
             {
                 string relative = BundleFolders.DownloadPath(file.Path);
                 string path = Receipt(relative);
+                if (!File.Exists(path)) path = Receipt(relative, true);
                 if (!File.Exists(path) && !String.Equals(file.Path, relative, StringComparison.OrdinalIgnoreCase))
                 {
                     relative = file.Path;
                     path = Receipt(relative);
+                    if (!File.Exists(path)) path = Receipt(relative, true);
                 }
                 if (!File.Exists(path)) return false;
                 try

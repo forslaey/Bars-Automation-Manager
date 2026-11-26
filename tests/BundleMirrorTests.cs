@@ -50,11 +50,26 @@ namespace ServiceTool
    System.IO.Directory.CreateDirectory(cleanupRoot);
    var finished=System.IO.Path.Combine(cleanupRoot,"keep.exe");
    System.IO.File.WriteAllText(finished,"fixture");
-   BundleSession.Save(cleanupRoot,express);
-   BundleSession.Cleanup(cleanupRoot);
+   var receiptFile=new BundleRemoteFile { Path="/dep.exe", Sha256=new string('a',64) };
+   using (BundleSession.Begin(cleanupRoot, null))
+   {
+    BundleSession.Save(cleanupRoot,express);
+    new BundleReceipts(cleanupRoot).Record(receiptFile);
+    System.IO.File.WriteAllText(System.IO.Path.Combine(cleanupRoot,".bars-download","recovery.bak"),"previous package");
+    bool locked=false;
+    try { using (BundleSession.Begin(cleanupRoot, null)) { } }
+    catch (System.IO.IOException) { locked=true; }
+    Check(locked && System.IO.Directory.Exists(System.IO.Path.Combine(cleanupRoot,".bars-download")),
+        "Parallel cleanup cannot remove active transfer");
+   }
    Check(System.IO.File.Exists(finished)&&!System.IO.Directory.Exists(System.IO.Path.Combine(cleanupRoot,".bars-download")),"Cleanup removes only temporary download folder");
+   var cleanupState=BundleSession.StateFolder(cleanupRoot);
+   Check(new BundleReceipts(cleanupRoot).CanReplace(receiptFile,receiptFile.Sha256),"Verified package receipt outlives temporary root");
+   Check(System.IO.Directory.GetFiles(System.IO.Path.Combine(cleanupState,"recovery")).Any(path =>
+        System.IO.File.ReadAllText(path)=="previous package"),"A rollback copy survives temporary cleanup");
    System.IO.File.Delete(finished);
    System.IO.Directory.Delete(cleanupRoot);
+   System.IO.Directory.Delete(cleanupState,true);
    using(var confirm=new BrandMessageDialog("Остановить загрузку? Готовые файлы сохранятся. Недокачанные файлы будут удалены.","Загрузка комплекта",MessageBoxButtons.YesNo,MessageBoxIcon.Warning,MessageBoxDefaultButton.Button2,ThemePalette.Create(true),true)){
     confirm.Show();Application.DoEvents();
     Check(Children(confirm).OfType<BrandButton>().All(button=>confirm.ClientRectangle.Contains(confirm.RectangleToClient(button.RectangleToScreen(button.ClientRectangle)))),"Cancel confirmation shows full button bounds");

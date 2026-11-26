@@ -37,6 +37,16 @@ namespace ServiceTool
             Check(LibraryVersions.Compatible(runtime, "11.0.0-rc.1.26425.129"), "Same RC series compares complete build");
             Check(!LibraryVersions.Compatible(runtime, "11.0.0-rc.2.26425.129"), "Different RC series is kept separate");
             var original = LibraryCatalog.All();
+            var devExpress = original.Where(LibraryDevExpress.IsPackage).ToArray();
+            Check(devExpress.Length == 2 && devExpress.Select(p => p.Id).Distinct().Count() == 2, "Both DevExpress rows remain independently selectable");
+            foreach (var profile in devExpress)
+            {
+                Check(profile.Name == "DevExpress " + profile.Version && profile.RelativePath == "12.devexpress.7z", "DevExpress keeps its display name with the shared source");
+                var stale = LibraryCatalog.Deserialize(LibraryCatalog.Serialize(profile));
+                stale.RelativePath = "DevExpress-old.exe";
+                LibraryCatalog.Merge(new[] { stale });
+                Check(LibraryDevExpress.IsPackage(LibraryCatalog.Find(profile.Id)), "An older catalog cannot replace the shared DevExpress source");
+            }
             Check(!original.Any(p => p.Kind == LibraryKind.Composite || p.Name.Contains("RuntimePack Full")), "Standalone Full absent from built-in catalog");
             var old = new LibraryPackage { Id = "oldFull", Name = "RuntimePack Full", Kind = LibraryKind.Composite };
             LibraryCatalog.Merge(new[] { old }); Check(!LibraryCatalog.All().Any(p => p.Id == old.Id), "Old cache cannot resurrect Full");
@@ -124,6 +134,17 @@ namespace ServiceTool
                     Console.WriteLine("PASS: read-only host detection of " + detected.Count + " entries; installed=" + detected.Count(c => c.State == LibraryState.Installed)); return 0;
                 }
                 VersionPolicyTests();
+                string devRoot = Path.Combine(root, "DevExpress-removal");
+                string oldVersion = Path.Combine(devRoot, "DevExpress 15.1.4");
+                string otherVersion = Path.Combine(devRoot, "DevExpress 22.1.4");
+                string extras = Path.Combine(oldVersion, "manual", "extra.txt");
+                Directory.CreateDirectory(Path.GetDirectoryName(extras));
+                Directory.CreateDirectory(otherVersion);
+                File.WriteAllText(extras, "extra");
+                File.SetAttributes(extras, FileAttributes.ReadOnly);
+                LibraryDevExpress.DeleteVersionFolder(devRoot, "15.1.4");
+                Check(!Directory.Exists(oldVersion) && Directory.Exists(otherVersion), "Whole selected version including a read-only extra is removed, sibling remains");
+                Reject(() => LibraryDevExpress.DeleteVersionFolder(devRoot, ".."), "Folder deletion only accepts the supported versions");
                 int pulses = 0;
                 var heartbeat = new LibraryHeartbeat(text => Interlocked.Increment(ref pulses), 20);
                 heartbeat.SetPhase("Slow copy"); Thread.Sleep(100); Check(Volatile.Read(ref pulses) > 1, "Heartbeat continues while worker is busy copying");
@@ -182,6 +203,21 @@ namespace ServiceTool
                         form.StartPosition = FormStartPosition.Manual; form.Location = new Point(-20000, -20000); form.ShowInTaskbar = false;
                         form.SetTheme(dark, false); form.Show(); Application.DoEvents();
                         Check(form.SourceDirectory == null && !form.IsInstalling, "Monitoring window opens with no source folder or installation");
+                        var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+                        var grid = (DataGridView)typeof(LibraryManagerForm).GetField("grid", flags).GetValue(form);
+                        var selected = (HashSet<string>)typeof(LibraryManagerForm).GetField("selection", flags).GetValue(form);
+                        var targets = typeof(LibraryManagerForm).GetMethod("ActionTargets", flags);
+                        var focus = typeof(LibraryManagerForm).GetField("useFocusedRow", flags);
+                        var rows = grid.Rows.Cast<DataGridViewRow>().Where(row => LibraryDevExpress.IsPackage((LibraryPackage)row.Tag)).ToArray();
+                        Check(rows.Length == 2, "Both DevExpress rows are visible");
+                        selected.Clear();
+                        foreach (var row in rows) row.Cells[0].Value = false;
+                        foreach (var row in rows) row.Cells[0].Value = true;
+                        grid.CurrentCell = rows[1].Cells[1];
+                        focus.SetValue(form, true);
+                        Check(((List<LibraryCheck>)targets.Invoke(form, null)).Count == 2, "Focus cannot replace two explicitly checked DevExpress rows");
+                        selected.Clear();
+                        Check(((List<LibraryCheck>)targets.Invoke(form, null)).Count == 1, "Focused-row action still works with no checked rows");
                         using (var image = new Bitmap(form.Width, form.Height)) form.DrawToBitmap(image, new Rectangle(Point.Empty, image.Size));
                         form.Close();
                     }
